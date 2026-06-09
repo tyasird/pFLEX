@@ -1,4 +1,4 @@
-# pflex
+# pFLEX
 
 ![PyPI](https://img.shields.io/badge/pypi-v1.0-orange)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
@@ -6,9 +6,9 @@
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
 ![Build system](https://img.shields.io/badge/build-hatchling-blue)
 ![Lint](https://img.shields.io/badge/lint-ruff-46a2f1)
-![CLI](https://img.shields.io/badge/CLI-pflex-brightgreen)
+![CLI](https://img.shields.io/badge/CLI-pFLEX-brightgreen)
 
-**pflex** is a benchmarking toolkit for evaluating CRISPR screen results against biological gold standards. It provides precision-recall analysis using reference gene sets from CORUM protein complexes, Gene Ontology Biological Processes (GO-BP), KEGG pathways, and other curated resources. The toolkit computes gene-level and complex-level performance metrics, helping researchers systematically assess the biological relevance and resolution of their CRISPR screening data.
+**pFLEX** is a benchmarking toolkit for evaluating CRISPR screen results against biological gold standards. It provides precision-recall analysis using reference gene sets from CORUM protein complexes, Gene Ontology Biological Processes (GO-BP), KEGG pathways, and other curated resources. The toolkit computes gene-level and complex-level performance metrics, helping researchers systematically assess the biological relevance and resolution of their CRISPR screening data.
 
 ---
 
@@ -33,7 +33,7 @@ conda activate p310
 pip install uv
 ```
 
-Install pflex via pip:
+Install pFLEX via pip:
 
 ```bash
 uv pip install pflex
@@ -45,11 +45,11 @@ or:
 pip install pflex
 ```
 
-or install pflex via git to develop the package locally:
+or install pFLEX via git to develop the package locally:
 
 ```bash
-git clone https://github.com/tyasird/pflex.git
-cd pflex
+git clone https://github.com/tyasird/pFLEX.git
+cd pFLEX
 uv pip install -e .
 ```
 
