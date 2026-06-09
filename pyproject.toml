@@ -1,0 +1,77 @@
+[project]
+name = "pflex"
+version = "1.0"
+description = "pflex is a benchmarking toolkit for evaluating CRISPR screen results against biological gold standards. The toolkit computes gene-level and complex-level performance metrics, helping researchers systematically assess the biological relevance and resolution of their CRISPR screening data."
+readme = "README.md"
+authors = [
+    { name = "Yasir Demirtas", email = "tyasird@hotmail.com" }
+]
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "adjustText",
+    "art",
+    "bitarray",
+    "emoji",
+    "ipython",
+    "joblib",
+    "loguru",
+    "matplotlib",
+    "numba",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "python-slugify",
+    "scikit-learn",
+    "scipy",
+    "tqdm",
+    "importlib-resources",
+]
+
+[project.scripts]
+pflex = "pflex:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+ignore = ["F541"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["pflex*"]
+
+[tool.setuptools.package-data]
+pflex = ["data/**/*.parquet", "data/**/*.csv", "data/**/*.tsv", "data/**/*.json", "data/**/*.txt", "data/**/*.xlsx", "data/**/*.xls", "data/**/*.h5", "data/**/*.hdf5"]
+
+[tool.hatch.build]
+exclude = [
+    "**/result.pkl",
+    "examples/output",
+    "src/pflex/input/*",
+    "src/pflex/output/*",
+    "src/pflex/examples/output/*",
+    "src/pflex/examples/.tmp/*",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pflex"]
+
+[tool.uv.sources]
+pflex = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pflex",
+]
