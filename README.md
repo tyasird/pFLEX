@@ -8,7 +8,11 @@
 ![Lint](https://img.shields.io/badge/lint-ruff-46a2f1)
 ![CLI](https://img.shields.io/badge/CLI-pFLEX-brightgreen)
 
-**pFLEX** is a benchmarking toolkit for evaluating CRISPR screen results against biological gold standards. It provides precision-recall analysis using reference gene sets from CORUM protein complexes, Gene Ontology Biological Processes (GO-BP), KEGG pathways, and other curated resources. The toolkit computes gene-level and complex-level performance metrics, helping researchers systematically assess the biological relevance and resolution of their CRISPR screening data.
+
+🧬 **Abstract**  
+
+Genetic networks derived from omics data are a powerful tool for systematic gene function prediction. Performance evaluation of such predictions is crucial to judge the data and computational pipeline to derive the networks, but functional diversity within protein complex or pathway standards often cause hidden evaluation biases. To visualize and mitigate such biases, we recently developed an R package FLEX. Here, we present the FLEX genetic network benchmarking tool as Python library with new and improved functionality. The pythonFLEX library improves the overall runtime 4.1 to 15.8-fold. It offers additional evaluation metrics that allow for an easy comparison of precision recall performance at the complex or pathway resolution between genetic networks. We demonstrate the utility of pythonFLEX for evaluating tissue-specific co-essentiality networks and data normalization strategies of the Cancer Dependency Map. This illustrates how different biological module-resolved precision recall metrics in pythonFLEX enable sensitive and fast evaluation of genetic networks.
+
 
 ---
 
