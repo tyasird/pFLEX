@@ -72,7 +72,7 @@ pFLEX expects each input dataset as a matrix with genes in rows and screens, sam
 | AATF | 0.042 | -0.088 | -0.016 |
 | BCL6 | -0.019 | 0.112 | -0.074 |
 
-CSV, Excel, Parquet, and `.p` files are supported; `.p` files are read as Parquet. Parquet is recommended for larger matrices.
+CSV, Excel, and Parquet files are supported. Parquet is recommended for larger matrices.
 
 The packaged example inputs are real DepMap 25Q2 tissue subsets filtered to genes present in CORUM:
 
