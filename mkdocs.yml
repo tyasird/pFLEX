@@ -1,0 +1,28 @@
+site_name: pFLEX
+site_url: https://tyasird.github.io/pFLEX/
+repo_url: https://github.com/tyasird/pFLEX
+repo_name: tyasird/pFLEX
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: indigo
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Getting Started: getting-started.md
+  - User Guide: user-guide.md
+  - GitHub: https://github.com/tyasird/pFLEX
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.inlinehilite

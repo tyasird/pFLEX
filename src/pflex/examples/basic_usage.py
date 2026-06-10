@@ -6,20 +6,15 @@ Demonstrates initialization, data loading, analysis, and plotting.
 import pflex as flex
 
 inputs = {
-    "Melanoma (63 Screens)": {
-        "path": flex.get_example_data_path("melanoma_cell_lines_500_genes.csv"),
+    "Skin": {
+        "path": flex.example_input_path("skin_cell_lines_corum_genes.parquet"),
         "sort": "high",
         "color": "#4E79A7",
     },
-    "Liver (24 Screens)": {
-        "path": flex.get_example_data_path("liver_cell_lines_500_genes.csv"),
+    "Soft Tissue": {
+        "path": flex.example_input_path("soft_tissue_cell_lines_corum_genes.parquet"),
         "sort": "high",
         "color": "#F28E2B",
-    },
-    "Neuroblastoma (37 Screens)": {
-        "path": flex.get_example_data_path("neuroblastoma_cell_lines_500_genes.csv"),
-        "sort": "high",
-        "color": "#59A14F",
     },
 }
 
@@ -29,7 +24,7 @@ default_config = {
     "min_genes_in_complex": 2,
     "min_genes_per_complex_analysis": 2,
     "output_folder": "output_test",
-    "gold_standard": "GOBP",
+    "functional_standard": "CORUM",
     "color_map": "RdYlBu",
     "jaccard": True,
     "analysis_genes": "shared",  # or "dataset_specific" (genes present per dataset)
@@ -39,13 +34,10 @@ default_config = {
     },
     "preprocessing": {
         "fill_na": True,
-        "normalize": False,
     },
     "corr_function": "numpy_without_mask",
     "per_complex": {
         "n_jobs": 8,
-        "chunk_size": 400,
-        "max_nbytes": "100M",
     },
     "logging": {  
         "visible_levels": ["DONE", "INFO", "WARNING"]
@@ -56,9 +48,9 @@ default_config = {
 # Initialize logger, config, and output folder
 flex.initialize(default_config)
 
-# Load datasets and gold standard terms
+# Load datasets and functional standard terms
 data, _ = flex.load_datasets(inputs)
-terms, genes_in_terms = flex.load_gold_standard()
+terms, genes_in_terms = flex.load_functional_standard()
 
 # Run analysis
 for name, dataset in data.items():
@@ -67,10 +59,7 @@ for name, dataset in data.items():
     pra = flex.pra(name, corr, is_corr=True)
     fpc = flex.pra_percomplex(name, corr, is_corr=True)
     cc = flex.complex_contributions(name)
-
-    # Optional mPR analysis. This can be slow on large datasets.
-    # flex.mpr_prepare(name)
-    
+    flex.mpr_prepare(name)
 
 
 #%%
@@ -78,18 +67,11 @@ for name, dataset in data.items():
 flex.plot_precision_recall_curve()
 flex.plot_auc_scores()
 flex.plot_significant_complexes()
-#%%
 flex.plot_percomplex_scatter(n_top=10)
 flex.plot_percomplex_scatter_bysize(n_top=10)
-#flex.plot_complex_contributions()
-
-# Optional mPR summary plot. Requires flex.mpr_prepare(name) above.
-# flex.plot_mpr_summary(variants="unfiltered")
+flex.plot_complex_contributions()
+flex.plot_mpr_summary()
 
 #%%
 # Save results to CSV
-# flex.save_results_to_csv()
-
-#how many cpu I have?
-import multiprocessing
-print(f"Number of CPU cores available: {multiprocessing.cpu_count()}")
+flex.save_results_to_csv()

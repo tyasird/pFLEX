@@ -1,19 +1,32 @@
 # Python-generated files
 __pycache__/
 *.py[oc]
+.tmp/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
 build/
 dist/
+site/
 wheels/
 *.egg-info
+tmp/
+temp/
 
 
 bfg-*.jar
 
 # Virtual environments
 .venv
+.env
+.env.*
 **/result.pkl
 examples/output/
+output_test/
 src/pflex/examples/output/
+src/pflex/examples/output_test/
+src/pflex/examples/.tmp/
 src/pflex/output/
 src/pflex/input/
 .aider*

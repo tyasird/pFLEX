@@ -19,7 +19,11 @@ from tqdm import tqdm
 
 # Local/application-specific imports
 from .logging_config import log
-from .preprocessing import filter_matrix_by_genes, filter_duplicate_terms
+from .preprocessing import (
+    filter_matrix_by_genes,
+    filter_duplicate_terms,
+    load_functional_standard,
+)
 from .utils import dsave, dload, _sanitize, normalize_analysis_genes
 
 import matplotlib as mpl
@@ -41,7 +45,7 @@ def initialize(config={}):
         "min_genes_in_complex": 3,
         "min_genes_per_complex_analysis": 2,
         "output_folder": "output",
-        "gold_standard": "CORUM",
+        "functional_standard": "CORUM",
         "color_map": "RdYlBu",
         "jaccard": True,
         # Which genes are used for analysis (drives used_genes intersection)
@@ -100,7 +104,7 @@ def initialize(config={}):
     log.set_visible_levels(visible_levels)
 
     log.info("******************************************************************")
-    log.info("🧬 pflex: Systematic CRISPR screen benchmarking framework")
+    log.info("pFLEX initialized")
     log.info("******************************************************************")
     log.started("Initialization")
 
@@ -119,7 +123,8 @@ def initialize(config={}):
     os.makedirs(output_folder, exist_ok=True)
     log.progress(f"Output folder '{output_folder}' ensured to exist.")
     log.done("Initialization completed. ")
-    tprint("FLEX",font="standard")
+    log.info("Input data: genes should be rows and samples should be columns.")
+    #tprint("pFLEX", font="standard")
 
 def update_matploblib_config(config=None, font_family="Arial", layout="single"):
     """
@@ -232,7 +237,7 @@ def _sort_ascending_for_dataset(dataset_name):
 
 
 def prepare_terms_for_dataset(dataset_name, matrix):
-    """Prepare dataset-specific gold-standard terms and filtered matrix.
+    """Prepare dataset-specific functional-standard terms and filtered matrix.
 
         This computes:
             - terms['used_genes'] as the intersection of terms['all_genes'] with either
@@ -254,12 +259,18 @@ def prepare_terms_for_dataset(dataset_name, matrix):
             "prepare_terms_for_dataset(): config not found. Run initialize() first."
         )
 
-    terms_data = dload("common", "terms")
+    terms_path_exists = any(
+        Path(".tmp", "common", f"terms{ext}").exists()
+        for ext in (".parquet", ".npy", ".pkl")
+    )
+    terms_data = dload("common", "terms") if terms_path_exists else None
     if terms_data is None or not isinstance(terms_data, pd.DataFrame):
-        raise ValueError(
-            "prepare_terms_for_dataset(): expected 'terms' to be a DataFrame, but got None or invalid type. "
-            "Make sure to run load_gold_standard() first."
-        )
+        log.info("Functional standard terms not loaded; loading them now.")
+        terms_data, _ = load_functional_standard()
+        if terms_data is None or not isinstance(terms_data, pd.DataFrame):
+            raise ValueError(
+                "prepare_terms_for_dataset(): expected 'terms' to be a DataFrame, but got None or invalid type."
+            )
     terms = terms_data.copy()
 
     analysis_genes = normalize_analysis_genes(config.get("analysis_genes"))
@@ -359,7 +370,7 @@ def pra(dataset_name, matrix, is_corr=False):
         df["recall"] = recall
         pr_auc = metrics.auc(recall, precision) if len(recall) >= 2 else np.nan
     
-    log.info(f"PR-AUC: {pr_auc:.4f}, Number of true positives: {df['prediction'].sum()}")
+    log.info(f"AUPRC: {pr_auc:.4f}, Number of true positives: {df['prediction'].sum()}")
     dsave(df, "pra", dataset_name)
     dsave(pr_auc, "pr_auc", dataset_name)
     dsave(_corrected_auc(df), "corrected_pr_auc", dataset_name)
@@ -649,7 +660,7 @@ def pra_percomplex(dataset_name, matrix, is_corr=False, chunk_size=None, n_jobs=
         extra = f" ({len(errors) - 3} more)" if len(errors) > 3 else ""
         raise RuntimeError(f"Per-complex PRA failed in worker chunks: {preview}{extra}")
     
-    # Add the computed AUC scores to the terms DataFrame.
+    # Add the computed AUPRC values to the terms DataFrame.
     terms["auc_score"] = pd.Series(auc_scores)
     terms["corrected_auc_score"] = pd.Series(corrected_auc_scores)
     dsave(terms, "pra_percomplex", dataset_name)
@@ -847,7 +858,7 @@ def complex_contributions(name):
 
 def perform_corr(df, corr_func):
     if corr_func not in {"numpy", "numpy_without_mask","pandas","numba"}:
-        raise ValueError("corr_func must be 'numpy' or 'pandas'")
+        raise ValueError("corr_func must be 'numpy', 'numpy_without_mask', 'numba', or 'pandas'")
 
     log.started(f"Performing correlation using '{corr_func}' method.")
     
@@ -1540,7 +1551,7 @@ def mpr_prepare(
         )
     if terms is None or not isinstance(terms, pd.DataFrame) or terms.empty:
         raise RuntimeError(
-            "mpr_prepare(): CORUM 'terms' table not found (dload('common', 'terms'))."
+            "mpr_prepare(): functional standard 'terms' table not found (dload('common', 'terms'))."
         )
 
     ascending = _sort_ascending_for_dataset(name)

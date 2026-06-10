@@ -1,33 +1,32 @@
 # pFLEX
 
-![PyPI](https://img.shields.io/badge/pypi-v1.0-orange)
-![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+![PyPI](https://img.shields.io/badge/pypi-v1.1-orange)
+![Python](https://img.shields.io/badge/python-3.10-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
 ![Build system](https://img.shields.io/badge/build-hatchling-blue)
 ![Lint](https://img.shields.io/badge/lint-ruff-46a2f1)
 ![CLI](https://img.shields.io/badge/CLI-pFLEX-brightgreen)
 
+**Abstract**
 
-🧬 **Abstract**  
-
-Genetic networks derived from omics data are a powerful tool for systematic gene function prediction. Performance evaluation of such predictions is crucial to judge the data and computational pipeline to derive the networks, but functional diversity within protein complex or pathway standards often cause hidden evaluation biases. To visualize and mitigate such biases, we recently developed an R package FLEX. Here, we present the FLEX genetic network benchmarking tool as Python library with new and improved functionality. The pythonFLEX library improves the overall runtime 4.1 to 15.8-fold. It offers additional evaluation metrics that allow for an easy comparison of precision recall performance at the complex or pathway resolution between genetic networks. We demonstrate the utility of pythonFLEX for evaluating tissue-specific co-essentiality networks and data normalization strategies of the Cancer Dependency Map. This illustrates how different biological module-resolved precision recall metrics in pythonFLEX enable sensitive and fast evaluation of genetic networks.
-
+Genetic networks derived from omics data are a powerful tool for systematic gene function prediction. Performance evaluation of such predictions is crucial to judge the data and computational pipeline to derive the networks, but functional diversity within protein complex or pathway standards often cause hidden evaluation biases. To visualize and mitigate such biases, we recently developed an R package FLEX. Here, we present the FLEX genetic network benchmarking tool as Python library with new and improved functionality. The pFLEX library improves the overall runtime 4.1 to 15.8-fold. It offers additional evaluation metrics that allow for an easy comparison of precision recall performance at the complex or pathway resolution between genetic networks. We demonstrate the utility of pFLEX for evaluating tissue-specific co-essentiality networks and data normalization strategies of the Cancer Dependency Map. This illustrates how different biological module-resolved precision recall metrics in pFLEX enable sensitive and fast evaluation of genetic networks.
 
 ---
 
 ## Features
 
 - Precision-recall curve generation for ranked gene lists
-- Evaluation using CORUM complexes, GO terms, pathways
+- Evaluation using CORUM complexes, GO terms, and pathways
 - Complex-level resolution analysis and visualization
 - Easy integration into CRISPR screen workflows
+- Packaged DepMap example inputs filtered to CORUM genes
 
 ---
 
 ## Installation
 
-Suggested to use Python version `3.10` with `virtual env`.
+pFLEX is developed and tested with Python 3.10. We recommend installing it in a dedicated Python 3.10 environment to keep the package and its scientific Python dependencies separate from other projects.
 
 Create `venv`:
 
@@ -59,78 +58,148 @@ uv pip install -e .
 
 ---
 
+## Usage
+
+Full documentation is available at [https://tyasird.github.io/pFLEX/](https://tyasird.github.io/pFLEX/).
+
+### Input Data
+
+pFLEX expects each input dataset as a matrix with genes in rows and screens, samples, or cell lines in columns.
+
+| Gene | ACH-000014 | ACH-000219 | ACH-000274 |
+| --- | ---: | ---: | ---: |
+| A2M | -0.125 | -0.215 | 0.065 |
+| AATF | 0.042 | -0.088 | -0.016 |
+| BCL6 | -0.019 | 0.112 | -0.074 |
+
+CSV, Excel, Parquet, and `.p` files are supported; `.p` files are read as Parquet. Parquet is recommended for larger matrices.
+
+The packaged example inputs are real DepMap 25Q2 tissue subsets filtered to genes present in CORUM:
+
+- `skin_cell_lines_corum_genes.parquet`: 3,465 genes x 75 cell lines
+- `soft_tissue_cell_lines_corum_genes.parquet`: 3,465 genes x 46 cell lines
+
+Use `flex.example_input_path()` to resolve packaged example inputs:
+
+```python
+import pflex as flex
+
+inputs = {
+    "Skin": {
+        "path": flex.example_input_path("skin_cell_lines_corum_genes.parquet"),
+        "sort": "high",
+        "color": "#4E79A7",
+    },
+    "Soft Tissue": {
+        "path": flex.example_input_path("soft_tissue_cell_lines_corum_genes.parquet"),
+        "sort": "high",
+        "color": "#F28E2B",
+    },
+}
+```
+
+### Configuration
+
+```python
+config = {
+    "functional_standard": "CORUM",
+    "min_genes_in_complex": 2,
+    "min_genes_per_complex_analysis": 2,
+    "output_folder": "output",
+    "analysis_genes": "shared",
+    "jaccard": True,
+    "preprocessing": {
+        "fill_na": True,
+    },
+    "corr_function": "numpy_without_mask",
+    "per_complex": {
+        "n_jobs": 8,
+    },
+    "plotting": {
+        "save_plot": True,
+        "output_type": "png",
+    },
+}
+```
+
+Common choices:
+
+- `functional_standard`: `"CORUM"`, `"GOBP"`, `"PATHWAY"`, or a custom `.csv` path
+- `analysis_genes`: `"shared"` or `"dataset_specific"`
+- `sort`: `"high"` or `"low"` per input dataset
+- `preprocessing.fill_na`: fill missing values with gene means
+- `corr_function`: `"numpy"`, `"numpy_without_mask"`, `"numba"`, or `"pandas"`
+- `per_complex.n_jobs`: worker count for per-complex analysis
+
+### Analysis Flow
+
+```python
+flex.initialize(config)
+data, common_genes = flex.load_datasets(inputs)
+terms, _ = flex.load_functional_standard()
+
+for name, dataset in data.items():
+    corr = flex.perform_corr(dataset, config["corr_function"])
+    flex.pra(name, corr, is_corr=True)
+    flex.pra_percomplex(name, corr, is_corr=True)
+    flex.complex_contributions(name)
+    flex.mpr_prepare(name)
+
+flex.plot_precision_recall_curve()
+flex.plot_auc_scores()
+flex.plot_significant_complexes()
+flex.plot_percomplex_scatter(n_top=10)
+flex.plot_percomplex_scatter_bysize(n_top=10)
+flex.plot_complex_contributions()
+flex.plot_mpr_summary()
+flex.save_results_to_csv()
+```
+
+See the [User Guide](https://tyasird.github.io/pFLEX/user-guide/) for a detailed explanation of every input field, configuration key, function, return value, and output.
+
+---
+
 ## Quickstart
 
 ```python
 import pflex as flex
 
 inputs = {
-    "Melanoma (63 Screens)": {
-        "path": flex.get_example_data_path("melanoma_cell_lines_500_genes.csv"),
+    "Skin": {
+        "path": flex.example_input_path("skin_cell_lines_corum_genes.parquet"),
         "sort": "high",
-        "color": "#FF0000",
+        "color": "#4E79A7",
     },
-    "Liver (24 Screens)": {
-        "path": flex.get_example_data_path("liver_cell_lines_500_genes.csv"),
+    "Soft Tissue": {
+        "path": flex.example_input_path("soft_tissue_cell_lines_corum_genes.parquet"),
         "sort": "high",
-        "color": "#FFDD00",
-    },
-    "Neuroblastoma (37 Screens)": {
-        "path": flex.get_example_data_path("neuroblastoma_cell_lines_500_genes.csv"),
-        "sort": "high",
-        "color": "#FFDDDD",
+        "color": "#F28E2B",
     },
 }
 
-default_config = {
-    "min_genes_in_complex": 0,
-    "min_genes_per_complex_analysis": 3,
-    "output_folder": "CORUM",
-    "gold_standard": "CORUM",
-    "color_map": "BuGn",
-    "jaccard": False,
-    "use_common_genes": False,
-    "plotting": {
-        "save_plot": True,
-        "output_type": "png",
-    },
+config = {
+    "functional_standard": "CORUM",
+    "output_folder": "output",
+    "analysis_genes": "shared",
+    "jaccard": True,
     "preprocessing": {
         "fill_na": True,
-        "normalize": False,
     },
-    "corr_function": "numpy",
-    "logging": {
-        "visible_levels": ["DONE"],
-    },
+    "corr_function": "numpy_without_mask",
 }
 
-flex.initialize(default_config)
-
+flex.initialize(config)
 data, _ = flex.load_datasets(inputs)
-terms, genes_in_terms = flex.load_gold_standard()
 
 for name, dataset in data.items():
-    pra = flex.pra(name, dataset, is_corr=False)
-    fpc = flex.pra_percomplex(name, dataset, is_corr=False)
-    cc = flex.complex_contributions(name)
-    flex.mpr_prepare(name)
+    corr = flex.perform_corr(dataset, config["corr_function"])
+    flex.pra(name, corr, is_corr=True)
 
 flex.plot_precision_recall_curve()
 flex.plot_auc_scores()
-flex.plot_significant_complexes()
-flex.plot_percomplex_scatter(n_top=20)
-flex.plot_percomplex_scatter_bysize()
-flex.plot_complex_contributions()
-flex.plot_mpr_tp_multi()
-flex.plot_mpr_complexes_multi()
-flex.save_results_to_csv()
 ```
 
----
-
-## Examples
-
-- [src/pflex/examples/basic_usage.py](src/pflex/examples/basic_usage.py)
+For a runnable full workflow, see [src/pflex/examples/basic_usage.py](src/pflex/examples/basic_usage.py).
 
 ---
 

@@ -1,15 +1,14 @@
 [project]
 name = "pflex"
-version = "1.0"
-description = "pflex is a benchmarking toolkit for evaluating CRISPR screen results against biological gold standards. The toolkit computes gene-level and complex-level performance metrics, helping researchers systematically assess the biological relevance and resolution of their CRISPR screening data."
+version = "1.1"
+description = "pflex is a benchmarking toolkit for evaluating CRISPR screen results against biological functional standards. The toolkit computes gene-level and complex-level performance metrics, helping researchers systematically assess the biological relevance and resolution of their CRISPR screening data."
 readme = "README.md"
 authors = [
     { name = "Yasir Demirtas", email = "tyasird@hotmail.com" }
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "License :: OSI Approved :: MIT License",
@@ -57,12 +56,31 @@ pflex = ["data/**/*.parquet", "data/**/*.csv", "data/**/*.tsv", "data/**/*.json"
 
 [tool.hatch.build]
 exclude = [
+    ".git",
+    ".github",
+    ".venv",
+    "**/.env",
+    "**/.env.*",
+    "**/.ipynb_checkpoints",
+    "**/.mypy_cache",
+    "**/.pytest_cache",
+    "**/.ruff_cache",
+    "**/.tmp",
+    "**/__pycache__",
+    "**/*.pyc",
+    "**/*.pyo",
     "**/result.pkl",
+    "build",
+    "dist",
     "examples/output",
+    "site",
     "src/pflex/input/*",
     "src/pflex/output/*",
     "src/pflex/examples/output/*",
     "src/pflex/examples/.tmp/*",
+    "tmp",
+    "temp",
+    "wheels",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -74,4 +92,6 @@ pflex = { workspace = true }
 [dependency-groups]
 dev = [
     "pflex",
+    "mkdocs",
+    "mkdocs-material",
 ]

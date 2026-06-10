@@ -283,13 +283,14 @@ def plot_all_runs_pra(pra_list, mean_df=None, line_width=2.0, hide_minor_ticks=T
 def plot_percomplex_scatter(
     n_top=10,
     sig_color='black',
-    nonsig_color='none',
+    nonsig_color='white',
     label_color='black',
     border_color='black',
     border_width=1.0,
     nonsig_border_color="#7F7F7F",
     nonsig_border_width=0.5,
-    show_text_background=True,
+    show_labels=True,
+    show_text_background=False,
 ):
     config = dload("config")
     plot_config = config["plotting"]
@@ -332,12 +333,12 @@ def plot_percomplex_scatter(
         # Create square figure
         fig, ax = plt.subplots(figsize=(6, 6))
 
-        # Background cloud: non-significant complexes are open circles.
+        # Background cloud: non-significant complexes are opaque white-filled circles.
         bg_sizes = (bg_df['n_used_genes'] if 'n_used_genes' in bg_df else pd.Series(1, index=bg_df.index)) * 5
         ax.scatter(
             bg_df[pair[0]], bg_df[pair[1]],
-            facecolors="none", edgecolors=nonsig_border_color,
-            s=bg_sizes, linewidth=nonsig_border_width, alpha=0.8,
+            facecolors=nonsig_color, edgecolors=nonsig_border_color,
+            s=bg_sizes, linewidth=nonsig_border_width,
             zorder=0
         )
 
@@ -370,64 +371,64 @@ def plot_percomplex_scatter(
         # Complexes significant in both datasets stay black to avoid ambiguous color mixing.
         scatter_significant(significant_in_both, "black", zorder=3)
 
-        # Improved label positioning with adaptive spacing
-        coords = sorted(
-            [(sig_df.loc[idx, pair[0]], sig_df.loc[idx, pair[1]], idx) for idx in sig_df.index],
-            key=lambda c: (-c[1], -c[0])
-        )
-        
-        # Calculate proper parameters for normalized coordinate system (0-1 range)
-        max_y = 1.0  # Normalized plots use 0-1 range
-        scale_factor = 1.0  # Standard scaling for normalized plots
-        min_distance = 0.08  # Increased spacing for 0-1 range to avoid overlap
-        
-        adjusted_coords = adjust_text_positions_improved(
-            coords, sig_sizes,
-            min_distance=min_distance,
-            max_y=max_y,
-            scale_factor=scale_factor,
-            y_threshold=0.8  # Points above this will have labels below
-        )
-        
-        for x, adj_y, idx, direction in adjusted_coords:
-            y = df.loc[idx, pair[1]]
+        if show_labels:
+            # Improved label positioning with adaptive spacing
+            coords = sorted(
+                [(sig_df.loc[idx, pair[0]], sig_df.loc[idx, pair[1]], idx) for idx in sig_df.index],
+                key=lambda c: (-c[1], -c[0])
+            )
             
-            # Calculate connector line extension, but constrain within plot bounds
-            line_extension_factor = 1.5  # Reduced from 2.5 to keep labels in bounds
-            extended_adj_y = y + (adj_y - y) * line_extension_factor
-            
-            # Clip to ensure connector stays within 0-1 range
-            extended_adj_y = max(0.02, min(extended_adj_y, 0.98))
-            
-            # Draw connector line
-            ax.plot([x, x], [y, extended_adj_y], 
-                   color=label_color, linewidth=0.6, alpha=0.15, zorder=3)
-            
-            # Position text at the end of extended line with small offset
-            text_y_offset = 0.01 if direction == "up" else -0.01
-            final_text_y = extended_adj_y + text_y_offset
-            
-            # Final clip to ensure text stays within 0-1 range
-            final_text_y = max(0.02, min(final_text_y, 0.98))
-            
-            # Prepare text bbox settings (can be turned on/off)
-            bbox_props = dict(facecolor="white", alpha=0.7, edgecolor="none", pad=1) if show_text_background else None
-            
-            ax.text(
-                x, final_text_y,
-                df.loc[idx, 'Name'][:10] + '.' if len(df.loc[idx, 'Name']) > 10 else df.loc[idx, 'Name'],
-                fontsize=4,
-                ha='left', 
-                va='bottom' if direction == "up" else 'top',
-                color=label_color,
-                linespacing=1, 
-                zorder=4,
-                clip_on=True,  # Enable clipping to axes bounds
-                bbox=bbox_props
+            # Calculate proper parameters for normalized coordinate system (0-1 range)
+            max_y = 1.0  # Normalized plots use 0-1 range
+            scale_factor = 1.0  # Standard scaling for normalized plots
+            min_distance = 0.08  # Increased spacing for 0-1 range to avoid overlap
+
+            adjusted_coords = adjust_text_positions_improved(
+                coords, sig_sizes,
+                min_distance=min_distance,
+                max_y=max_y,
+                scale_factor=scale_factor,
+                y_threshold=0.8  # Points above this will have labels below
             )
 
+            for x, adj_y, idx, direction in adjusted_coords:
+                y = df.loc[idx, pair[1]]
+
+                # Calculate connector line extension, but constrain within plot bounds
+                line_extension_factor = 1.5  # Reduced from 2.5 to keep labels in bounds
+                extended_adj_y = y + (adj_y - y) * line_extension_factor
+
+                # Clip to ensure connector stays within 0-1 range
+                extended_adj_y = max(0.02, min(extended_adj_y, 0.98))
+
+                # Draw connector line
+                ax.plot([x, x], [y, extended_adj_y],
+                       color=label_color, linewidth=0.6, zorder=3)
+
+                # Position text at the end of extended line with small offset
+                text_y_offset = 0.01 if direction == "up" else -0.01
+                final_text_y = extended_adj_y + text_y_offset
+
+                # Final clip to ensure text stays within 0-1 range
+                final_text_y = max(0.02, min(final_text_y, 0.98))
+
+                bbox_props = dict(facecolor="white", edgecolor="none", pad=1) if show_text_background else None
+
+                ax.text(
+                    x, final_text_y,
+                    df.loc[idx, 'Name'][:10] + '.' if len(df.loc[idx, 'Name']) > 10 else df.loc[idx, 'Name'],
+                    fontsize=4,
+                    ha='left',
+                    va='bottom' if direction == "up" else 'top',
+                    color=label_color,
+                    linespacing=1,
+                    zorder=4,
+                    clip_on=True,  # Enable clipping to axes bounds
+                    bbox=bbox_props
+                )
+
         # Diagonal & axes cosmetics
-        ax.plot([0, 1], [0, 1], linestyle='-', color='lightgray', alpha=0.4, linewidth=0.5, zorder=1)
+        ax.plot([0, 1], [0, 1], linestyle='-', color='lightgray', linewidth=0.5, zorder=1)
         
         # Force square aspect ratio and exact 0-1 range
         ax.set_xlim(0, 1)
@@ -439,8 +440,8 @@ def plot_percomplex_scatter(
         ax.set_xticks(ticks)
         ax.set_yticks(ticks)
         
-        ax.set_xlabel(f"{pair[0]} PR-AUC score")
-        ax.set_ylabel(f"{pair[1]} PR-AUC score")
+        ax.set_xlabel(f"{pair[0]} AUPRC")
+        ax.set_ylabel(f"{pair[1]} AUPRC")
         #ax.set_title(f"{pair[0]} vs {pair[1]} - Comparison of complex performance")
 
         # Nature style: no grid, open top/right spines
@@ -831,13 +832,13 @@ def position_cluster_labels(cluster, cluster_id, max_y, effective_max_y, label_c
         
         # Draw connector line
         ax.plot([x, x], [y, connector_end], 
-               color=label_color, linewidth=0.6, alpha=0.4, zorder=3)
+               color=label_color, linewidth=0.6, zorder=3)
         
         # Position text
         text_x = x + 0.02 if x < 0.7 else x - 0.02
         ha = 'left' if x < 0.7 else 'right'
         
-        bbox_props = dict(facecolor="white", alpha=0.8, edgecolor="none", pad=1) if show_text_background else None
+        bbox_props = dict(facecolor="white", edgecolor="none", pad=1) if show_text_background else None
         label_text = top_labels.loc[idx, 'Name'][:12] + '...' if len(top_labels.loc[idx, 'Name']) > 12 else top_labels.loc[idx, 'Name']
         
         ax.text(
@@ -870,7 +871,7 @@ def position_cluster_labels(cluster, cluster_id, max_y, effective_max_y, label_c
             
             # Draw connector line from original point
             ax.plot([x, x], [y, connector_end], 
-                   color=label_color, linewidth=0.5, alpha=0.3, zorder=3)
+                   color=label_color, linewidth=0.5, zorder=3)
             
             # Position text with alternating sides to reduce overlap
             side_offset = 0.03 if i % 2 == 0 else -0.03
@@ -879,7 +880,7 @@ def position_cluster_labels(cluster, cluster_id, max_y, effective_max_y, label_c
             
             ha = 'left' if side_offset > 0 else 'right'
             
-            bbox_props = dict(facecolor="white", alpha=0.9, edgecolor="none", pad=0.5) if show_text_background else None
+            bbox_props = dict(facecolor="white", edgecolor="none", pad=0.5) if show_text_background else None
             label_text = top_labels.loc[idx, 'Name'][:10] + '.' if len(top_labels.loc[idx, 'Name']) > 10 else top_labels.loc[idx, 'Name']
             
             ax.text(
@@ -919,7 +920,7 @@ def position_cluster_labels(cluster, cluster_id, max_y, effective_max_y, label_c
                 
                 # Draw connector line
                 ax.plot([x, x], [y, connector_end], 
-                       color=label_color, linewidth=0.4, alpha=0.25, zorder=3)
+                       color=label_color, linewidth=0.4, zorder=3)
                 
                 # Position text in columns
                 text_x = cluster_center_x + (side * 0.04)  # Offset to left/right
@@ -927,7 +928,7 @@ def position_cluster_labels(cluster, cluster_id, max_y, effective_max_y, label_c
                 
                 ha = 'right' if side < 0 else 'left'
                 
-                bbox_props = dict(facecolor="white", alpha=0.95, edgecolor="none", pad=0.3) if show_text_background else None
+                bbox_props = dict(facecolor="white", edgecolor="none", pad=0.3) if show_text_background else None
                 label_text = top_labels.loc[idx, 'Name'][:8] + '.' if len(top_labels.loc[idx, 'Name']) > 8 else top_labels.loc[idx, 'Name']
                 
                 ax.text(
@@ -942,13 +943,14 @@ def plot_percomplex_scatter_bysize(
     n_labels=10,
     n_top=10,
     sig_color='black',
-    nonsig_color='none',
+    nonsig_color='white',
     label_color='black',
     border_color='black',
     border_width=1.0,
     nonsig_border_color="#7F7F7F",
     nonsig_border_width=0.5,
-    show_text_background=True,
+    show_labels=True,
+    show_text_background=False,
 ):
     config = dload("config")
     plot_config = config["plotting"]
@@ -970,12 +972,12 @@ def plot_percomplex_scatter_bysize(
         fig_height = min(max(4, aspect_ratio), 8)  # Between 4-8 inches
         fig, ax = plt.subplots(figsize=(6, fig_height))
 
-        # Background: non-significant complexes are open circles.
+        # Background: non-significant complexes are opaque white-filled circles.
         ax.scatter(
             rest.auc_score, rest.n_used_genes,
-            facecolors="none", edgecolors=nonsig_border_color,
+            facecolors=nonsig_color, edgecolors=nonsig_border_color,
             linewidth=nonsig_border_width, s=rest.n_used_genes * 5,
-            alpha=0.8, label="Other Complexes",
+            label="Other Complexes",
             zorder=0
         )
 
@@ -984,31 +986,31 @@ def plot_percomplex_scatter_bysize(
             top_labels.auc_score, top_labels.n_used_genes,
             facecolors=dataset_color, edgecolors=dataset_color,
             linewidth=border_width, s=top_labels.n_used_genes * 8,
-            label=f"Top {n_labels} AUC Scores", alpha=1.0, zorder=2
+            label=f"Top {n_labels} AUC Scores", zorder=2
         )
 
-        # Enhanced anti-overlap labeling system
-        coords = [(row.auc_score, row.n_used_genes, idx) for idx, row in top_labels.iterrows()]
         max_y = sorted_pc.n_used_genes.max()
-        
-        # Define plot boundaries with margins for text
-        plot_margin = max_y * 0.2  # Increased margin for complex layouts
+        plot_margin = max_y * 0.2 if show_labels else max_y * 0.05
         effective_max_y = max_y + plot_margin
-        
-        # Cluster nearby points
-        clusters = cluster_nearby_points(coords, cluster_threshold=0.15)
-        
-        # Position labels for each cluster
-        for i, cluster in enumerate(clusters):
-            position_cluster_labels(
-                cluster, i, max_y, effective_max_y, 
-                label_color, ax, top_labels, show_text_background
-            )
+
+        if show_labels:
+            # Enhanced anti-overlap labeling system
+            coords = [(row.auc_score, row.n_used_genes, idx) for idx, row in top_labels.iterrows()]
+
+            # Cluster nearby points
+            clusters = cluster_nearby_points(coords, cluster_threshold=0.15)
+
+            # Position labels for each cluster
+            for i, cluster in enumerate(clusters):
+                position_cluster_labels(
+                    cluster, i, max_y, effective_max_y,
+                    label_color, ax, top_labels, show_text_background
+                )
 
         # Set y-axis to show integer values only
         from matplotlib.ticker import MaxNLocator
         ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-        ax.set_xlabel("PR-AUC score")
+        ax.set_xlabel("AUPRC")
         ax.set_ylabel("Number of genes in the complex")
 
         # Configure axes with proper boundaries
@@ -1197,8 +1199,8 @@ def plot_significant_complexes():
     ax.set_xticks(np.arange(len(thresholds)) + (num_datasets - 1) * bar_width / 2)
     ax.set_xticklabels([str(t) for t in thresholds], rotation=0, ha='center')
 
-    #ax.set_title("Number of significant complexes above PR-AUC thresholds")
-    ax.set_xlabel("PR-AUC score thresholds")
+    #ax.set_title("Number of significant complexes above AUPRC thresholds")
+    ax.set_xlabel("AUPRC thresholds")
     ax.set_ylabel("Number of complexes")
 
     # Nature style: no grid; open top/right spines
@@ -1261,8 +1263,8 @@ def plot_auc_scores():
     ax.bar(datasets, auc_scores, color=final_colors, edgecolor="black")
 
     ax.set_ylim(0, max(auc_scores) + 0.01)
-    #ax.set_title("AUC scores for the datasets")
-    ax.set_ylabel("AUC score")
+    #ax.set_title("AUPRC values for the datasets")
+    ax.set_ylabel("AUPRC")
     plt.xticks(rotation=45, ha="right")
 
     # Hard-disable any grid/ruler
@@ -1276,7 +1278,7 @@ def plot_auc_scores():
         output_type = plot_config["output_type"]
         output_folder = Path(config["output_folder"])
         output_folder.mkdir(parents=True, exist_ok=True)
-        output_path = output_folder / f"prauc_scores.{output_type}"
+        output_path = output_folder / f"auprc_values.{output_type}"
         plt.savefig(output_path, bbox_inches='tight', format=output_type)
 
     if plot_config.get("show_plot", True):
@@ -1287,7 +1289,7 @@ def plot_auc_scores():
 
 
 def plot_mpr_complex_auc_scores(variant: str = "unfiltered", save=None, outname=None):
-    """Plot AUC scores for the mPR complexes curve (Fig 1F-style).
+    """Plot AUC values for the mPR complexes curve (Fig 1F-style).
 
     Requires `mpr_prepare()` to have been run for each dataset.
 
@@ -1337,7 +1339,7 @@ def plot_mpr_complex_auc_scores(variant: str = "unfiltered", save=None, outname=
 
     if not auc_by_dataset:
         log.warning(
-            f"No mPR complex AUC scores found for variant '{variant}'. "
+            f"No mPR complex AUC values found for variant '{variant}'. "
             f"Available variants: {list(PUBLIC_MPR_VARIANTS.keys())}"
         )
         return pd.Series(dtype=float)
@@ -2108,7 +2110,7 @@ def plot_mpr_summary(
     marker_size=20,
     auc_variant=None,
 ):
-    """Generate the standard mPR summary plots and return complex AUC scores."""
+    """Generate the standard mPR summary plots and return complex AUC values."""
     plot_mpr_true_positive_curve(
         dataset_names=dataset_names,
         colors=colors,

@@ -48,8 +48,12 @@ def return_package_dir():
 
 
 
+def example_input_path(filename: str):
+    return files("pflex.data").joinpath("example_input").joinpath(filename)
+
+
 def get_example_data_path(filename: str):
-    return files("pflex.data").joinpath("dataset").joinpath(filename)
+    return example_input_path(filename)
 
 
 def _load_file(filepath, ext):
@@ -191,7 +195,7 @@ def filter_matrix_by_genes(matrix, genes_present_in_terms):
 
 
 
-def load_gold_standard():
+def load_functional_standard():
     
     package_dir = return_package_dir()
     data_dir_path = os.path.join(package_dir, 'data')
@@ -208,41 +212,44 @@ def load_gold_standard():
         ),
     )
 
-    gold_standard_source = config['gold_standard']
+    functional_standard_source = config["functional_standard"]
     jaccard_enabled = bool(config.get("jaccard", False))
     log.done(
-        f"Loading gold standard: {gold_standard_source}, Min complex size: {config['min_genes_in_complex']}, "
+        f"Loading functional standard: {functional_standard_source}, Min complex size: {config['min_genes_in_complex']}, "
         f"Jaccard filtering: {jaccard_enabled} (exact duplicate used_genes after dataset filtering), "
         f"analysis_genes: {analysis_genes}"
     )
 
-    # Define gold standard file paths for predefined sources
-    gold_standard_files = {
-        "CORUM": "gold_standard/CORUM.parquet",
-        "GOBP": "gold_standard/GOBP.parquet",
-        "PATHWAY": "gold_standard/PATHWAY.parquet"
+    # Define functional standard file paths for predefined sources
+    functional_standard_files = {
+        "CORUM": "functional_standard/CORUM.parquet",
+        "GOBP": "functional_standard/GOBP.parquet",
+        "PATHWAY": "functional_standard/PATHWAY.parquet"
     }
     
-    if gold_standard_source in gold_standard_files:
-        # Load predefined gold standard from package resources
-        filename = gold_standard_files[gold_standard_source] 
+    if functional_standard_source in functional_standard_files:
+        # Load predefined functional standard from package resources
+        filename = functional_standard_files[functional_standard_source]
         filename_path = Path(data_dir_path).joinpath(filename)
         if not filename_path.exists():  # Check if the file exists
-            raise ValueError(f"Invalid Gold Standard type: {gold_standard_source}. File not found.")
+            raise ValueError(f"Invalid functional standard type: {functional_standard_source}. File not found.")
         terms = pd.read_parquet(filename_path)  # type: ignore
-    elif Path(gold_standard_source).suffix.lower() == '.csv':
-        # Load user-provided custom gold standard from CSV file
-        filename_path = Path(gold_standard_source)
+    elif Path(functional_standard_source).suffix.lower() == '.csv':
+        # Load user-provided custom functional standard from CSV file
+        filename_path = Path(functional_standard_source)
         if not filename_path.exists():
-            raise ValueError(f"Custom gold standard CSV file not found: {gold_standard_source}")
-        log.done(f"Loading custom gold standard from CSV: {gold_standard_source}")
+            raise ValueError(f"Custom functional standard CSV file not found: {functional_standard_source}")
+        log.done(f"Loading custom functional standard from CSV: {functional_standard_source}")
         terms = pd.read_csv(filename_path)  
     else:
-        raise ValueError(f"Invalid gold standard source: {gold_standard_source}. Must be one of {list(gold_standard_files.keys())} or a path to a .csv file.")
+        raise ValueError(
+            f"Invalid functional standard source: {functional_standard_source}. "
+            f"Must be one of {list(functional_standard_files.keys())} or a path to a .csv file."
+        )
 
-    # Store raw gold standard for later per-dataset filtering
+    # Store raw functional standard for later per-dataset filtering
     terms["all_genes"] = terms["Genes"].apply(lambda x: list(set(x.split(";"))))
-    log.done(f"Gold standard loaded with {len(terms)} terms")
+    log.done(f"Functional standard loaded with {len(terms)} terms")
 
     # Basic filtering by minimum complex size (before gene filtering)
     terms["n_all_genes"] = terms["all_genes"].apply(len) 
@@ -254,7 +261,7 @@ def load_gold_standard():
         terms = terms.set_index("ID")
 
     dsave(terms, "common", "terms")
-    log.done("Gold standard loading completed.")
+    log.done("Functional standard loading completed.")
     return terms, None  # Return None for genes_present_in_terms - will be computed per dataset
 
 

@@ -1,6 +1,6 @@
 from .logging_config import log
 from .utils import dsave, dload
-from .preprocessing import get_example_data_path, load_datasets,  get_common_genes, filter_matrix_by_genes, load_gold_standard, filter_duplicate_terms
+from .preprocessing import example_input_path, get_example_data_path, load_datasets,  get_common_genes, filter_matrix_by_genes, load_functional_standard, filter_duplicate_terms
 from .analysis import initialize, prepare_terms_for_dataset, pra, pra_percomplex, fast_corr, perform_corr, is_symmetric, binary, has_mirror_of_first_pair, convert_full_to_half_matrix, drop_mirror_pairs, quick_sort, complex_contributions, save_results_to_csv, update_matploblib_config, mpr_prepare
 from .plotting import (
     adjust_text_positions, plot_precision_recall_curve, plot_aggregated_pra, plot_iqr_pra, plot_all_runs_pra, plot_percomplex_scatter,
@@ -30,9 +30,9 @@ def main():
     parser.parse_args()
     parser.print_help()
 
-__all__ = [ "log", "get_example_data_path", "fast_corr",
+__all__ = [ "log", "example_input_path", "get_example_data_path", "fast_corr",
     "initialize", "dsave", "dload", "load_datasets", "get_common_genes",
-    "filter_matrix_by_genes", "load_gold_standard", "filter_duplicate_terms", "pra", "pra_percomplex",
+    "filter_matrix_by_genes", "load_functional_standard", "filter_duplicate_terms", "pra", "pra_percomplex",
     "prepare_terms_for_dataset",
     "perform_corr", "is_symmetric", "binary", "has_mirror_of_first_pair", "convert_full_to_half_matrix",
     "drop_mirror_pairs", "quick_sort", "complex_contributions", "adjust_text_positions", "plot_precision_recall_curve",
