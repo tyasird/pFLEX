@@ -1,6 +1,6 @@
 # pFLEX
 
-pFLEX is a Python toolkit for evaluating CRISPR screen and co-essentiality networks against biological functional standards such as CORUM protein complexes, Gene Ontology Biological Processes, and pathways.
+pFLEX is a Python toolkit for evaluating CRISPR screen and co-essentiality networks against biological functional standards such as CORUM-derived modules, Gene Ontology Biological Processes, and pathways.
 
 Use pFLEX to:
 

@@ -1,7 +1,7 @@
 [project]
 name = "pflex"
 version = "1.1"
-description = "pflex is a benchmarking toolkit for evaluating CRISPR screen results against biological functional standards. The toolkit computes gene-level and complex-level performance metrics, helping researchers systematically assess the biological relevance and resolution of their CRISPR screening data."
+description = "pflex is a benchmarking toolkit for evaluating CRISPR screen results against biological functional standards. The toolkit computes gene-level and module-level performance metrics, helping researchers systematically assess the biological relevance and resolution of their CRISPR screening data."
 readme = "README.md"
 authors = [
     { name = "Yasir Demirtas", email = "tyasird@hotmail.com" }

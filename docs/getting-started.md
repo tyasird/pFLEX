@@ -28,8 +28,8 @@ inputs = {
 
 config = {
     "functional_standard": "CORUM",
-    "min_genes_in_complex": 2,
-    "min_genes_per_complex_analysis": 2,
+    "min_genes_in_module": 2,
+    "min_genes_per_module_analysis": 2,
     "output_folder": "output",
     "analysis_genes": "shared",
     "jaccard": True,
@@ -37,7 +37,7 @@ config = {
         "fill_na": True,
     },
     "corr_function": "numpy_without_mask",
-    "per_complex": {
+    "per_module": {
         "n_jobs": 8,
     },
     "plotting": {
@@ -53,16 +53,16 @@ terms, _ = flex.load_functional_standard()
 for name, dataset in data.items():
     corr = flex.perform_corr(dataset, config["corr_function"])
     flex.pra(name, corr, is_corr=True)
-    flex.pra_percomplex(name, corr, is_corr=True)
-    flex.complex_contributions(name)
+    flex.pra_per_module(name, corr, is_corr=True)
+    flex.module_contributions(name)
     flex.mpr_prepare(name)
 
 flex.plot_precision_recall_curve()
 flex.plot_auc_scores()
-flex.plot_significant_complexes()
-flex.plot_percomplex_scatter(n_top=10)
-flex.plot_percomplex_scatter_bysize(n_top=10)
-flex.plot_complex_contributions()
+flex.plot_significant_modules()
+flex.plot_per_module_scatter(n_top=10)
+flex.plot_per_module_scatter_by_size(n_top=10)
+flex.plot_module_contributions()
 flex.plot_mpr_summary()
 flex.save_results_to_csv()
 ```

@@ -215,7 +215,7 @@ def load_functional_standard():
     functional_standard_source = config["functional_standard"]
     jaccard_enabled = bool(config.get("jaccard", False))
     log.done(
-        f"Loading functional standard: {functional_standard_source}, Min complex size: {config['min_genes_in_complex']}, "
+        f"Loading functional standard: {functional_standard_source}, Min module size: {config['min_genes_in_module']}, "
         f"Jaccard filtering: {jaccard_enabled} (exact duplicate used_genes after dataset filtering), "
         f"analysis_genes: {analysis_genes}"
     )
@@ -251,10 +251,10 @@ def load_functional_standard():
     terms["all_genes"] = terms["Genes"].apply(lambda x: list(set(x.split(";"))))
     log.done(f"Functional standard loaded with {len(terms)} terms")
 
-    # Basic filtering by minimum complex size (before gene filtering)
+    # Basic filtering by minimum module size (before gene filtering)
     terms["n_all_genes"] = terms["all_genes"].apply(len) 
-    terms = terms[terms["n_all_genes"] >= config['min_genes_in_complex']]
-    log.done(f"After min_genes_in_complex filtering: {len(terms)} terms")
+    terms = terms[terms["n_all_genes"] >= config['min_genes_in_module']]
+    log.done(f"After min_genes_in_module filtering: {len(terms)} terms")
 
     # if there is column called "ID", set it as index
     if "ID" in terms.columns:

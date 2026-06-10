@@ -10,15 +10,15 @@
 
 **Abstract**
 
-Genetic networks derived from omics data are a powerful tool for systematic gene function prediction. Performance evaluation of such predictions is crucial to judge the data and computational pipeline for network construction, but unbalanced functional standards often cause hidden evaluation biases. To visualize and mitigate such biases, we previously developed the R package FLEX. Here, we present the pFLEX genetic network benchmarking tool as Python library with new and improved functionality. pFLEX improves overall runtime 4.1 to 15.8-fold. It offers additional evaluation metrics that allow for easy comparison of precision recall performance at the complex or pathway resolution between genetic networks. We demonstrate the utility of pFLEX for evaluating tissue-specific co-essentiality networks and data normalization strategies of the Cancer Dependency Map, as well as for cell line-specific Perturb-Seq-derived networks. This illustrates the requirement for biological module-resolved precision recall metrics in pFLEX for sensitive and fast evaluation of genetic networks.
+Genetic networks derived from omics data are a powerful tool for systematic gene function prediction. Performance evaluation of such predictions is crucial to judge the data and computational pipeline for network construction, but unbalanced functional standards often cause hidden evaluation biases. To visualize and mitigate such biases, we previously developed the R package FLEX. Here, we present the pFLEX genetic network benchmarking tool as Python library with new and improved functionality. pFLEX improves overall runtime 4.1 to 15.8-fold. It offers additional evaluation metrics that allow for easy comparison of precision recall performance at the module or pathway resolution between genetic networks. We demonstrate the utility of pFLEX for evaluating tissue-specific co-essentiality networks and data normalization strategies of the Cancer Dependency Map, as well as for cell line-specific Perturb-Seq-derived networks. This illustrates the requirement for biological module-resolved precision recall metrics in pFLEX for sensitive and fast evaluation of genetic networks.
 
 ---
 
 ## Features
 
 - Precision-recall curve generation for ranked gene lists
-- Evaluation using CORUM complexes, GO terms, and pathways
-- Complex-level resolution analysis and visualization
+- Evaluation using CORUM-derived modules, GO terms, and pathways
+- Module-level resolution analysis and visualization
 - Easy integration into CRISPR screen workflows
 - Packaged DepMap example inputs filtered to CORUM genes
 
@@ -103,8 +103,8 @@ inputs = {
 ```python
 config = {
     "functional_standard": "CORUM",
-    "min_genes_in_complex": 2,
-    "min_genes_per_complex_analysis": 2,
+    "min_genes_in_module": 2,
+    "min_genes_per_module_analysis": 2,
     "output_folder": "output",
     "analysis_genes": "shared",
     "jaccard": True,
@@ -112,7 +112,7 @@ config = {
         "fill_na": True,
     },
     "corr_function": "numpy_without_mask",
-    "per_complex": {
+    "per_module": {
         "n_jobs": 8,
     },
     "plotting": {
@@ -129,7 +129,7 @@ Common choices:
 - `sort`: `"high"` or `"low"` per input dataset
 - `preprocessing.fill_na`: fill missing values with gene means
 - `corr_function`: `"numpy"`, `"numpy_without_mask"`, `"numba"`, or `"pandas"`
-- `per_complex.n_jobs`: worker count for per-complex analysis
+- `per_module.n_jobs`: worker count for per-module analysis
 
 ### Analysis Flow
 
@@ -141,16 +141,16 @@ terms, _ = flex.load_functional_standard()
 for name, dataset in data.items():
     corr = flex.perform_corr(dataset, config["corr_function"])
     flex.pra(name, corr, is_corr=True)
-    flex.pra_percomplex(name, corr, is_corr=True)
-    flex.complex_contributions(name)
+    flex.pra_per_module(name, corr, is_corr=True)
+    flex.module_contributions(name)
     flex.mpr_prepare(name)
 
 flex.plot_precision_recall_curve()
 flex.plot_auc_scores()
-flex.plot_significant_complexes()
-flex.plot_percomplex_scatter(n_top=10)
-flex.plot_percomplex_scatter_bysize(n_top=10)
-flex.plot_complex_contributions()
+flex.plot_significant_modules()
+flex.plot_per_module_scatter(n_top=10)
+flex.plot_per_module_scatter_by_size(n_top=10)
+flex.plot_module_contributions()
 flex.plot_mpr_summary()
 flex.save_results_to_csv()
 ```
