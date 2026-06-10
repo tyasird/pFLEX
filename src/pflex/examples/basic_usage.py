@@ -21,8 +21,8 @@ inputs = {
 
 
 default_config = {
-    "min_genes_in_complex": 2,
-    "min_genes_per_complex_analysis": 2,
+    "min_genes_in_module": 2,
+    "min_genes_per_module_analysis": 2,
     "output_folder": "output_test",
     "functional_standard": "CORUM",
     "color_map": "RdYlBu",
@@ -36,7 +36,7 @@ default_config = {
         "fill_na": True,
     },
     "corr_function": "numpy_without_mask",
-    "per_complex": {
+    "per_module": {
         "n_jobs": 8,
     },
     "logging": {  
@@ -54,11 +54,11 @@ terms, genes_in_terms = flex.load_functional_standard()
 
 # Run analysis
 for name, dataset in data.items():
-    # Calculate correlation once and reuse it for global and per-complex PRA.
+    # Calculate correlation once and reuse it for global and per-module PRA.
     corr = flex.perform_corr(dataset, default_config["corr_function"])
     pra = flex.pra(name, corr, is_corr=True)
-    fpc = flex.pra_percomplex(name, corr, is_corr=True)
-    cc = flex.complex_contributions(name)
+    fpc = flex.pra_per_module(name, corr, is_corr=True)
+    cc = flex.module_contributions(name)
     flex.mpr_prepare(name)
 
 
@@ -66,12 +66,14 @@ for name, dataset in data.items():
 # Generate plots
 flex.plot_precision_recall_curve()
 flex.plot_auc_scores()
-flex.plot_significant_complexes()
-flex.plot_percomplex_scatter(n_top=10)
-flex.plot_percomplex_scatter_bysize(n_top=10)
-flex.plot_complex_contributions()
+flex.plot_significant_modules()
+flex.plot_per_module_scatter(n_top=10)
+flex.plot_per_module_scatter_by_size(n_top=10)
+flex.plot_module_contributions()
 flex.plot_mpr_summary()
 
 #%%
 # Save results to CSV
 flex.save_results_to_csv()
+
+# %%

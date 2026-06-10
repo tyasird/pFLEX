@@ -42,8 +42,8 @@ def initialize(config={}):
     user_overrides = config if isinstance(config, dict) else {}
 
     default_config = {
-        "min_genes_in_complex": 3,
-        "min_genes_per_complex_analysis": 2,
+        "min_genes_in_module": 3,
+        "min_genes_per_module_analysis": 2,
         "output_folder": "output",
         "functional_standard": "CORUM",
         "color_map": "RdYlBu",
@@ -63,7 +63,7 @@ def initialize(config={}):
             "drop_na": False,
         },
         "corr_function": "numpy",
-        "per_complex": {
+        "per_module": {
             "n_jobs": 4,
             "chunk_size": 200,
             "max_nbytes": "100M",
@@ -302,7 +302,7 @@ def prepare_terms_for_dataset(dataset_name, matrix):
         lambda genes: list(set(genes) & gene_universe)
     )
 
-    min_genes_raw = config.get("min_genes_in_complex", 3)
+    min_genes_raw = config.get("min_genes_in_module", 3)
     min_genes = int(min_genes_raw) if min_genes_raw is not None else 3
     terms["n_used_genes"] = terms["used_genes"].apply(len)
     terms = terms[terms["n_used_genes"] >= min_genes]
@@ -343,15 +343,15 @@ def pra(dataset_name, matrix, is_corr=False):
     df = quick_sort(df, ascending=ascending)
 
     log.started("Building gene-to-pair indices")
-    gold_pair_to_complex = _build_gold_pair_to_complex(terms)  
+    gold_pair_to_module = _build_gold_pair_to_module(terms)  
     log.done("Gene-to-pair indices built.")
     
-    log.started("Precomputing complex IDs")
-    df = _precompute_complex_ids(df, gold_pair_to_complex)
-    log.done("Complex IDs precomputed.")
+    log.started("Precomputing module IDs")
+    df = _precompute_module_ids(df, gold_pair_to_module)
+    log.done("Module IDs precomputed.")
 
-    df["prediction"] = df["complex_ids"].astype(bool).astype(int)
-    df["complex_id"] = df["complex_ids"].apply(
+    df["prediction"] = df["module_ids"].astype(bool).astype(int)
+    df["module_id"] = df["module_ids"].apply(
         lambda s: list(map(int, s.split(";"))) if s else []
     )
 
@@ -379,7 +379,7 @@ def pra(dataset_name, matrix, is_corr=False):
     return df
 
 # --------------------------------------------------------------------------
-# helper functions for PRA per-complex analysis
+# helper functions for PRA per-module analysis
 # --------------------------------------------------------------------------
 
 def _corrected_auc(df: pd.DataFrame) -> float:
@@ -400,29 +400,29 @@ def _build_gene_to_pair_indices(pairwise_df):
         gene_to_pair_indices[gene] = group.values.tolist() 
     return gene_to_pair_indices
 
-def _build_gold_pair_to_complex(terms):
+def _build_gold_pair_to_module(terms):
     pair_map = defaultdict(set)
-    for comp_id, genes in zip(terms.index, terms['used_genes']):
+    for module_id, genes in zip(terms.index, terms['used_genes']):
         genes = list(genes)
         if len(genes) < 2: continue
         for i in range(len(genes)):
             for j in range(i+1, len(genes)):
                 g1, g2 = sorted([genes[i], genes[j]])
-                pair_map[(g1, g2)].add(comp_id)
+                pair_map[(g1, g2)].add(module_id)
     return pair_map
 
-def _precompute_complex_ids(pairwise_df, gold_pair_to_complex):
-    if not gold_pair_to_complex:
-        pairwise_df['complex_ids'] = ''
+def _precompute_module_ids(pairwise_df, gold_pair_to_module):
+    if not gold_pair_to_module:
+        pairwise_df['module_ids'] = ''
         return pairwise_df
     
     # Precompute pairs as tuples
     g1 = pairwise_df['gene1']
     g2 = pairwise_df['gene2']
     pairs = [tuple(sorted((a, b))) for a, b in zip(g1, g2)]
-    pairwise_df['complex_ids'] = [
-        ';'.join(map(str, sorted(gold_pair_to_complex[p]))) 
-        if p in gold_pair_to_complex else '' 
+    pairwise_df['module_ids'] = [
+        ';'.join(map(str, sorted(gold_pair_to_module[p]))) 
+        if p in gold_pair_to_module else '' 
         for p in pairs
     ]
     return pairwise_df
@@ -481,10 +481,10 @@ def _process_chunk(chunk_terms, min_genes, memmap_path, gene_to_pair_indices):
             selected = np.unpackbits(candidate_indices).view(bool)[:len(pairwise_df)]
             sub_df   = pairwise_df.iloc[selected]
 
-            complex_id = str(idx)
-            pattern    = r'(?:^|;)' + re.escape(complex_id) + r'(?:;|$)'
-            true_label = sub_df["complex_ids"].str.contains(pattern, regex=True).astype(int)
-            mask       = (sub_df["complex_ids"] == "") | (true_label == 1)
+            module_id = str(idx)
+            pattern    = r'(?:^|;)' + re.escape(module_id) + r'(?:;|$)'
+            true_label = sub_df["module_ids"].str.contains(pattern, regex=True).astype(int)
+            mask       = (sub_df["module_ids"] == "") | (true_label == 1)
             preds      = true_label[mask]
 
             if preds.sum() == 0:
@@ -505,37 +505,37 @@ def _process_chunk(chunk_terms, min_genes, memmap_path, gene_to_pair_indices):
         # Return error info for debugging
         return {'error': str(e), 'chunk_size': len(chunk_terms)}
 
-def pra_percomplex(dataset_name, matrix, is_corr=False, chunk_size=None, n_jobs=None):
-    log.started(f"*** Per-complex PRA started - {dataset_name} ***")
+def pra_per_module(dataset_name, matrix, is_corr=False, chunk_size=None, n_jobs=None):
+    log.started(f"*** Per-module PRA started - {dataset_name} ***")
     config = dload("config")
     ascending = _sort_ascending_for_dataset(dataset_name)
-    per_complex_config = config.get("per_complex", {})
-    if not isinstance(per_complex_config, dict):
-        per_complex_config = {}
+    per_module_config = config.get("per_module", {})
+    if not isinstance(per_module_config, dict):
+        per_module_config = {}
     chunk_size_value = (
-        chunk_size if chunk_size is not None else per_complex_config.get("chunk_size", 200)
+        chunk_size if chunk_size is not None else per_module_config.get("chunk_size", 200)
     )
-    n_jobs_value = n_jobs if n_jobs is not None else per_complex_config.get("n_jobs", 4)
-    max_nbytes = per_complex_config.get("max_nbytes", "100M")
+    n_jobs_value = n_jobs if n_jobs is not None else per_module_config.get("n_jobs", 4)
+    max_nbytes = per_module_config.get("max_nbytes", "100M")
 
     try:
         effective_chunk_size = int(chunk_size_value)
         effective_n_jobs = int(n_jobs_value)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            "per-complex chunk_size and n_jobs must be integer-compatible values."
+            "per-module chunk_size and n_jobs must be integer-compatible values."
         ) from exc
 
     if effective_chunk_size <= 0:
-        raise ValueError("per-complex chunk_size must be greater than 0.")
+        raise ValueError("per-module chunk_size must be greater than 0.")
     if effective_n_jobs <= 0:
-        raise ValueError("per-complex n_jobs must be greater than 0.")
+        raise ValueError("per-module n_jobs must be greater than 0.")
 
     if not is_corr:
         matrix = perform_corr(matrix, config.get("corr_function"))
 
     # Prefer terms prepared by pra(); if absent, prepare them here so direct
-    # pra_percomplex() calls use the same dataset-specific gene universe.
+    # pra_per_module() calls use the same dataset-specific gene universe.
     terms = dload("common", f"terms_{dataset_name}")
     genes_present = dload("common", f"genes_present_in_terms_{dataset_name}")
 
@@ -560,25 +560,25 @@ def pra_percomplex(dataset_name, matrix, is_corr=False, chunk_size=None, n_jobs=
     gene_to_pair_indices = _build_gene_to_pair_indices(pairwise_df)
     log.done("Building gene-to-pair indices") 
     
-    log.started("Building gold pair to complex mapping")
-    gold_pair_to_complex = _build_gold_pair_to_complex(terms)  # Now serial
-    log.done("Building gold pair to complex mapping") 
+    log.started("Building gold pair to module mapping")
+    gold_pair_to_module = _build_gold_pair_to_module(terms)  # Now serial
+    log.done("Building gold pair to module mapping") 
     
-    log.started("Precomputing complex IDs")
-    pairwise_df = _precompute_complex_ids(pairwise_df, gold_pair_to_complex)
-    log.done("Precomputing complex IDs")  # 
+    log.started("Precomputing module IDs")
+    pairwise_df = _precompute_module_ids(pairwise_df, gold_pair_to_module)
+    log.done("Precomputing module IDs")  # 
 
     chunks = [
         terms.iloc[i:i + effective_chunk_size]
         for i in range(0, len(terms), effective_chunk_size)
     ]
-    min_genes = config["min_genes_per_complex_analysis"]
+    min_genes = config["min_genes_per_module_analysis"]
 
     if not chunks:
         terms["auc_score"] = pd.Series(dtype=float)
         terms["corrected_auc_score"] = pd.Series(dtype=float)
-        dsave(terms, "pra_percomplex", dataset_name)
-        log.done("Per-complex PRA completed with no eligible terms.")
+        dsave(terms, "pra_per_module", dataset_name)
+        log.done("Per-module PRA completed with no eligible terms.")
         return terms
 
     log.info('Dumping pairwise_df to memmap')
@@ -593,7 +593,7 @@ def pra_percomplex(dataset_name, matrix, is_corr=False, chunk_size=None, n_jobs=
         log.started("Processing chunks in parallel")
         actual_n_jobs = min(effective_n_jobs, len(chunks))
         log.info(
-            "Per-complex parallel config: "
+            "Per-module parallel config: "
             f"n_jobs={actual_n_jobs}, requested_n_jobs={effective_n_jobs}, "
             f"chunk_size={effective_chunk_size}, chunks={len(chunks)}, "
             f"max_nbytes={max_nbytes}"
@@ -606,7 +606,7 @@ def pra_percomplex(dataset_name, matrix, is_corr=False, chunk_size=None, n_jobs=
             max_nbytes=max_nbytes,
             verbose=1  # Show progress
         )(delayed(_process_chunk)(chunk, min_genes, memmap_path, gene_to_pair_indices) 
-          for chunk in tqdm(chunks, desc="Per-complex PRA"))
+          for chunk in tqdm(chunks, desc="Per-module PRA"))
         
         log.done("Processing chunks in parallel")
         
@@ -658,26 +658,26 @@ def pra_percomplex(dataset_name, matrix, is_corr=False, chunk_size=None, n_jobs=
     if errors:
         preview = "; ".join(errors[:3])
         extra = f" ({len(errors) - 3} more)" if len(errors) > 3 else ""
-        raise RuntimeError(f"Per-complex PRA failed in worker chunks: {preview}{extra}")
+        raise RuntimeError(f"Per-module PRA failed in worker chunks: {preview}{extra}")
     
     # Add the computed AUPRC values to the terms DataFrame.
     terms["auc_score"] = pd.Series(auc_scores)
     terms["corrected_auc_score"] = pd.Series(corrected_auc_scores)
-    dsave(terms, "pra_percomplex", dataset_name)
-    log.done(f"Per-complex PRA completed.")
+    dsave(terms, "pra_per_module", dataset_name)
+    log.done(f"Per-module PRA completed.")
     return terms
 
-def complex_contributions(name):
-    log.info(f"Computing complex contributions (Greedy) for dataset: {name}")
+def module_contributions(name):
+    log.info(f"Computing module contributions (Greedy) for dataset: {name}")
     pra = dload("pra", name)
     terms = dload("common", f"terms_{name}")
     if not isinstance(terms, pd.DataFrame):
         # Fallback for backward compatibility
         terms = dload("common", "terms")
     if not isinstance(pra, pd.DataFrame) or pra.empty:
-        raise RuntimeError(f"complex_contributions(): PRA data for dataset '{name}' not found.")
+        raise RuntimeError(f"module_contributions(): PRA data for dataset '{name}' not found.")
     if not isinstance(terms, pd.DataFrame) or terms.empty:
-        raise RuntimeError(f"complex_contributions(): terms for dataset '{name}' not found.")
+        raise RuntimeError(f"module_contributions(): terms for dataset '{name}' not found.")
     
     # Respect the dataset's score direction: high scores by default, low scores if configured.
     pra = pra.sort_values(
@@ -704,7 +704,7 @@ def complex_contributions(name):
     
     # Compute global unique ordered IDs for initial tie-breaking (appearance order from all positives)
     global_row_to_cids = []
-    for ids in positives['complex_id']:
+    for ids in positives['module_id']:
         if isinstance(ids, str):
             cleaned = [str(int(float(i.strip()))) for i in ids.split(';') if i.strip()]
         else:
@@ -743,16 +743,16 @@ def complex_contributions(name):
                 continue
             ind = matching_inds.min()  # First (smallest) like R
             
-            # Get top (ind+1) rows, filter to prediction==1 and non-null complex_id
+            # Get top (ind+1) rows, filter to prediction==1 and non-null module_id
             tmp = pra.iloc[0:ind + 1]
-            tmp = tmp[(tmp['prediction'] == 1) & tmp['complex_id'].notnull()].reset_index(drop=True)
+            tmp = tmp[(tmp['prediction'] == 1) & tmp['module_id'].notnull()].reset_index(drop=True)
             if tmp.empty:
                 pbar.update(1)
                 continue
             
             # Build row_to_cids as list of lists (str for consistency, matches R strsplit)
             row_to_cids = []
-            for ids in tmp['complex_id']:
+            for ids in tmp['module_id']:
                 if isinstance(ids, str):
                     cleaned = [str(int(float(i.strip()))) for i in ids.split(';') if i.strip()]
                 else:
@@ -848,8 +848,8 @@ def complex_contributions(name):
     # De-duplicate by Name, keeping first (matches R's !duplicated(Name) after function)
     r = r[~r['Name'].duplicated(keep='first')].reset_index(drop=True)
     
-    dsave(r, "complex_contributions", name)
-    log.info(f"Complex contribution (Greedy) completed for dataset: {name}")
+    dsave(r, "module_contributions", name)
+    log.info(f"Module contribution (Greedy) completed for dataset: {name}")
     return r
 
 # --------------------------------------------------------------------------
@@ -1017,7 +1017,7 @@ def quick_sort(df, ascending=False):
     log.done("Pair-wise matrix sorting.")
     return sorted_df
 
-def save_results_to_csv(categories = ["complex_contributions", "pr_auc", "pra_percomplex", "mpr_complexes_auc"]):
+def save_results_to_csv(categories = ["module_contributions", "pr_auc", "pra_per_module", "mpr_modules_auc"]):
 
     config = dload("config")  # Load config to get output folder
     output_folder = Path(config.get("output_folder", "output"))
@@ -1030,7 +1030,7 @@ def save_results_to_csv(categories = ["complex_contributions", "pr_auc", "pra_pe
             log.warning(f"No data found for category '{category}'. Skipping save.")
             continue
 
-        if category == "mpr_complexes_auc" and isinstance(data, dict):
+        if category == "mpr_modules_auc" and isinstance(data, dict):
             # Dict[dataset_name -> Dict[variant_key -> auc]]
             try:
                 df = pd.DataFrame.from_dict(data, orient="index")
@@ -1081,7 +1081,7 @@ def save_results_to_csv(categories = ["complex_contributions", "pr_auc", "pra_pe
 
 def _mpr_get_mtRibo_ETCI_ids(terms_like):
     """
-    Identify mitochondrial ribosome and ETC I complexes to remove.
+    Identify mitochondrial ribosome and ETC I modules to remove.
 
     Rule (matching the FLEX paper):
       - Name contains 'Respiratory chain complex I (holoenzyme)'
@@ -1099,33 +1099,33 @@ def _mpr_get_mtRibo_ETCI_ids(terms_like):
 
 
 def _mpr_get_small_high_auprc_ids(
-    pra_percomplex, size_th=30, auprc_th=0.4, use_corrected=True
+    pra_per_module, size_th=30, auprc_th=0.4, use_corrected=True
 ):
     """
-    Identify complexes that are small and have high per-complex AUPRC.
+    Identify modules that are small and have high per-module AUPRC.
 
     Small: full CORUM size (Length) < size_th
-    High AUPRC: per-complex AUPRC >= auprc_th
+    High AUPRC: per-module AUPRC >= auprc_th
     """
-    if "Length" not in pra_percomplex.columns:
+    if "Length" not in pra_per_module.columns:
         raise KeyError(
-            "mpr_prepare(): expected a 'Length' column in the per-complex table."
+            "mpr_prepare(): expected a 'Length' column in the per-module table."
         )
 
-    if use_corrected and "corrected_auc_score" in pra_percomplex.columns:
+    if use_corrected and "corrected_auc_score" in pra_per_module.columns:
         score_col = "corrected_auc_score"
-    elif "auc_score" in pra_percomplex.columns:
+    elif "auc_score" in pra_per_module.columns:
         score_col = "auc_score"
     else:
         raise KeyError(
-            "mpr_prepare(): expected 'corrected_auc_score' or 'auc_score' in the per-complex table."
+            "mpr_prepare(): expected 'corrected_auc_score' or 'auc_score' in the per-module table."
         )
 
-    size_mask = pra_percomplex["Length"] < size_th
-    score_mask = pra_percomplex[score_col] >= auprc_th
+    size_mask = pra_per_module["Length"] < size_th
+    score_mask = pra_per_module[score_col] >= auprc_th
 
     mask = size_mask & score_mask
-    return set(pra_percomplex.index[mask])
+    return set(pra_per_module.index[mask])
 
 
 # -------------------------------------------------------------------------
@@ -1136,41 +1136,41 @@ def _mpr_build_pairs(pra, removed_ids=None, ascending=False):
     """
     Build a Pairs.in.data-like table for mPR / stepwise contributions.
 
-    Rows containing filtered positive complex IDs are removed from the ranking,
+    Rows containing filtered positive module IDs are removed from the ranking,
     matching the FLEX stepwise module-level precision-recall behavior.
 
     Input:
       pra : DataFrame with at least columns
             - 'score'       : ranking score
-            - 'complex_id'  : complex annotations
-      removed_ids : set[int] of complexes to remove
+            - 'module_id'  : module annotations
+      removed_ids : set[int] of modules to remove
 
     Output:
       DataFrame with columns:
         - predicted   : score
         - true        : 0/1
-        - complex_ids : list[int] per row
+        - module_ids : list[int] per row
     """
-    if "complex_id" not in pra.columns and "complex_ids" not in pra.columns:
+    if "module_id" not in pra.columns and "module_ids" not in pra.columns:
         raise RuntimeError(
-            "mpr_prepare(): expected a 'complex_id' or 'complex_ids' column in 'pra'."
+            "mpr_prepare(): expected a 'module_id' or 'module_ids' column in 'pra'."
         )
 
     removed_ids = set(int(x) for x in (removed_ids or []))
 
     df = pra.copy()
 
-    # Normalize complex-ID column name
-    if "complex_id" in df.columns:
-        cid_col = "complex_id"
+    # Normalize module-ID column name
+    if "module_id" in df.columns:
+        cid_col = "module_id"
     else:
-        cid_col = "complex_ids"
+        cid_col = "module_ids"
 
     if "score" not in df.columns:
         raise RuntimeError("mpr_prepare(): expected a 'score' column in 'pra'.")
 
     def normalize_ids(cell):
-        """Parse complex IDs from various formats."""
+        """Parse module IDs from various formats."""
         if isinstance(cell, (list, tuple, np.ndarray, pd.Series)):
             return [int(x) for x in cell if pd.notnull(x)]
         elif isinstance(cell, str):
@@ -1197,18 +1197,18 @@ def _mpr_build_pairs(pra, removed_ids=None, ascending=False):
     # Build output DataFrame
     out = pd.DataFrame(index=df.index)
     out["predicted"] = df["score"].astype(float)
-    out["complex_ids"] = df[cid_col].apply(normalize_ids)
-    out["true"] = out["complex_ids"].apply(lambda ids: 1 if len(ids) > 0 else 0)
+    out["module_ids"] = df[cid_col].apply(normalize_ids)
+    out["true"] = out["module_ids"].apply(lambda ids: 1 if len(ids) > 0 else 0)
     
-    # Remove rows that are TPs and contain a removed complex ID.
+    # Remove rows that are TPs and contain a removed module ID.
     if removed_ids:
         should_remove_mask = df[cid_col].apply(should_remove)
         remove_mask = should_remove_mask & (out["true"] == 1)
         out = out[~remove_mask].copy()
     
-    # Also filter the complex_ids to remove the removed IDs (for stepwise contributions)
+    # Also filter the module_ids to remove the removed IDs (for stepwise contributions)
     if removed_ids:
-        out["complex_ids"] = out["complex_ids"].apply(
+        out["module_ids"] = out["module_ids"].apply(
             lambda ids: [cid for cid in ids if cid not in removed_ids]
         )
 
@@ -1250,17 +1250,17 @@ def _mpr_precision_cutoffs_from_pairs(pairs, step=0.025):
 
 def _mpr_stepwise_contributions(pairs, precision_cutoffs, ascending=False):
     """
-    Greedy, stepwise TP allocation per complex at each precision cutoff.
+    Greedy, stepwise TP allocation per module at each precision cutoff.
 
     Input:
       pairs : DataFrame with columns
               - predicted (float)
               - true (0/1)
-              - complex_ids : list[int]
+              - module_ids : list[int]
       precision_cutoffs : 1D array of precision thresholds
 
     Output:
-      contrib_df : DataFrame [complex_id x cutoff] with TP counts
+      contrib_df : DataFrame [module_id x cutoff] with TP counts
     """
     pairs = pairs.copy()
     pairs = pairs.sort_values("predicted", ascending=ascending).reset_index(drop=True)
@@ -1274,19 +1274,19 @@ def _mpr_stepwise_contributions(pairs, precision_cutoffs, ascending=False):
     denom = np.arange(n, dtype=float) + 1.0
     precision = tp_cum / denom
 
-    complex_lists = []
-    for cell in pairs["complex_ids"].tolist():
+    module_lists = []
+    for cell in pairs["module_ids"].tolist():
         if isinstance(cell, (list, tuple, np.ndarray, pd.Series)):
-            complex_lists.append([int(x) for x in cell if pd.notnull(x)])
+            module_lists.append([int(x) for x in cell if pd.notnull(x)])
         elif pd.isna(cell):
-            complex_lists.append([])
+            module_lists.append([])
         else:
             try:
-                complex_lists.append([int(cell)])
+                module_lists.append([int(cell)])
             except Exception:
-                complex_lists.append([])
+                module_lists.append([])
 
-    all_cids = sorted({cid for cids in complex_lists for cid in cids})
+    all_cids = sorted({cid for cids in module_lists for cid in cids})
     if not all_cids:
         return pd.DataFrame()
 
@@ -1319,7 +1319,7 @@ def _mpr_stepwise_contributions(pairs, precision_cutoffs, ascending=False):
 
         cid_to_rows = {}
         for r in tp_rows:
-            for cid in complex_lists[r]:
+            for cid in module_lists[r]:
                 cid_to_rows.setdefault(cid, set()).add(r)
 
         covered = set()
@@ -1343,7 +1343,7 @@ def _mpr_stepwise_contributions(pairs, precision_cutoffs, ascending=False):
 
     contrib_df = pd.DataFrame(
         contrib,
-        index=pd.Index(all_cids, name="complex_id"),
+        index=pd.Index(all_cids, name="module_id"),
         columns=precision_cutoffs,
     )
     return contrib_df
@@ -1357,12 +1357,12 @@ def _mpr_stepwise_contributions(pairs, precision_cutoffs, ascending=False):
 
 def _mpr_module_coverage(contrib_df, terms, tp_th=1, percent_th=0.1):
     """
-    Convert stepwise contribution matrix to "#covered complexes" per cutoff.
+    Convert stepwise contribution matrix to "#covered modules" per cutoff.
 
-    contrib_df : rows = complex_id (int), columns = precision_cutoffs (float)
-    terms      : CORUM 'terms' table (index = complex_id)
+    contrib_df : rows = module_id (int), columns = precision_cutoffs (float)
+    terms      : CORUM 'terms' table (index = module_id)
     
-    A complex is covered at a precision cutoff if:
+    A module is covered at a precision cutoff if:
     1. It contributes at least tp_th TP pairs (stepwise)
     2. The fraction of contributed pairs vs total possible pairs > percent_th
        (matches R behavior: x > percent_th)
@@ -1449,20 +1449,20 @@ def _mpr_module_coverage(contrib_df, terms, tp_th=1, percent_th=0.1):
     return coverage
 
 
-def _mpr_complexes_auc(
+def _mpr_modules_auc(
     coverage: np.ndarray,
     precision_cutoffs: np.ndarray,
-    max_complexes: float = 200.0,
+    max_modules: float = 200.0,
 ) -> float:
-    """Compute AUC for the Fig. 1F-style mPR curve (#complexes vs precision).
+    """Compute AUC for the Fig. 1F-style mPR curve (#modules vs precision).
 
     The plot uses:
-      x = #covered complexes (capped at `max_complexes`, shown on a log axis)
+      x = #covered modules (capped at `max_modules`, shown on a log axis)
       y = precision cutoff
 
     We compute a normalized AUC by integrating precision over the *normalized*
     coverage axis:
-        AUC = integral y d(x/max_complexes)
+        AUC = integral y d(x/max_modules)
 
     This yields a score in [0, 1] (or NaN if insufficient data).
     """
@@ -1472,12 +1472,12 @@ def _mpr_complexes_auc(
     if cov.size == 0 or prec.size == 0:
         return 0.0
 
-    # Match plot_mpr_complex_coverage_curve(): only count cov>0 (log-x cannot show 0)
+    # Match plot_mpr_module_coverage_curve(): only count cov>0 (log-x cannot show 0)
     mask = (
         np.isfinite(cov)
         & np.isfinite(prec)
         & (cov > 0)
-        & (cov <= max_complexes)
+        & (cov <= max_modules)
         & (prec >= 0)
         & (prec <= 1.0)
     )
@@ -1487,9 +1487,9 @@ def _mpr_complexes_auc(
     x_cov = cov[mask]
     y = prec[mask]
 
-    # x-axis is log-scaled in the plot; normalize so cov=1 -> 0, cov=max_complexes -> 1
+    # x-axis is log-scaled in the plot; normalize so cov=1 -> 0, cov=max_modules -> 1
     # (This matches the plot's tick hack where 1 is labeled as "0".)
-    x = np.log10(x_cov) / np.log10(float(max_complexes))
+    x = np.log10(x_cov) / np.log10(float(max_modules))
 
     # Sort by x and collapse duplicate x values by taking max y (upper envelope)
     order = np.argsort(x)
@@ -1529,11 +1529,11 @@ def mpr_prepare(
     Stores an 'mpr' object with:
       - precision_cutoffs
       - tp_curves[label]         : full PR (TP vs precision) per filter
-      - coverage_curves[label]   : #covered complexes per cutoff per filter
+      - coverage_curves[label]   : #covered modules per cutoff per filter
       - filters metadata
     """
     pra = dload("pra", name)
-    pra_percomplex = dload("pra_percomplex", name)
+    pra_per_module = dload("pra_per_module", name)
     terms = dload("common", f"terms_{name}")
     if not isinstance(terms, pd.DataFrame):
         # Fallback for backward compatibility
@@ -1544,10 +1544,10 @@ def mpr_prepare(
             f"mpr_prepare(): PRA data for dataset '{name}' not found "
             "(dload('pra', name))."
         )
-    if pra_percomplex is None or not isinstance(pra_percomplex, pd.DataFrame) or pra_percomplex.empty:
+    if pra_per_module is None or not isinstance(pra_per_module, pd.DataFrame) or pra_per_module.empty:
         raise RuntimeError(
-            f"mpr_prepare(): per-complex PRA data for dataset '{name}' not found "
-            "(dload('pra_percomplex', name))."
+            f"mpr_prepare(): per-module PRA data for dataset '{name}' not found "
+            "(dload('pra_per_module', name))."
         )
     if terms is None or not isinstance(terms, pd.DataFrame) or terms.empty:
         raise RuntimeError(
@@ -1563,9 +1563,9 @@ def mpr_prepare(
         pra = pra.reset_index(drop=True)
 
     # filters
-    mtRibo_ids = _mpr_get_mtRibo_ETCI_ids(pra_percomplex)
+    mtRibo_ids = _mpr_get_mtRibo_ETCI_ids(pra_per_module)
     small_hi_ids = _mpr_get_small_high_auprc_ids(
-        pra_percomplex,
+        pra_per_module,
         size_th=size_th,
         auprc_th=auprc_th,
         use_corrected=use_corrected,
@@ -1579,11 +1579,11 @@ def mpr_prepare(
 
     tp_curves = {}
     coverage_curves = {}
-    complexes_auc = {}
+    modules_auc = {}
     precision_cutoffs = None
 
     for label, removed in filter_sets.items():
-        # 1) Build pairs table after removing complexes in `removed`
+        # 1) Build pairs table after removing modules in `removed`
         pairs = _mpr_build_pairs(pra, removed_ids=removed, ascending=ascending)
 
         true = pairs["true"].to_numpy(dtype=int)
@@ -1594,7 +1594,7 @@ def mpr_prepare(
                 "precision": np.array([], dtype=float),
             }
             coverage_curves[label] = np.zeros(0, dtype=float)
-            complexes_auc[label] = float("nan")
+            modules_auc[label] = float("nan")
             continue
 
         tp_cum = true.cumsum()
@@ -1630,17 +1630,17 @@ def mpr_prepare(
         if cov.size > 0:
             cov = np.maximum.accumulate(cov[::-1])[::-1]
         coverage_curves[label] = cov
-        complexes_auc[label] = _mpr_complexes_auc(
+        modules_auc[label] = _mpr_modules_auc(
             cov,
             precision_cutoffs,
-            max_complexes=200.0,
+            max_modules=200.0,
         )
 
     mpr_data = {
         "precision_cutoffs": precision_cutoffs,
         "tp_curves": tp_curves,
         "coverage_curves": coverage_curves,
-        "complexes_auc": complexes_auc,
+        "modules_auc": modules_auc,
         "filters": {
             "no_mtRibo_ETCI": sorted(mtRibo_ids),
             "no_small_highAUPRC": sorted(small_hi_ids),
@@ -1655,4 +1655,4 @@ def mpr_prepare(
     dsave(mpr_data, "mpr", name)
 
     # Convenience: store AUCs as their own category for easy export / plotting.
-    dsave(complexes_auc, "mpr_complexes_auc", name)
+    dsave(modules_auc, "mpr_modules_auc", name)

@@ -56,8 +56,8 @@ Initialize pFLEX once at the start of a run:
 ```python
 config = {
     "functional_standard": "CORUM",
-    "min_genes_in_complex": 2,
-    "min_genes_per_complex_analysis": 2,
+    "min_genes_in_module": 2,
+    "min_genes_per_module_analysis": 2,
     "output_folder": "output",
     "analysis_genes": "shared",
     "jaccard": True,
@@ -65,7 +65,7 @@ config = {
         "fill_na": True,
     },
     "corr_function": "numpy_without_mask",
-    "per_complex": {
+    "per_module": {
         "n_jobs": 8,
     },
     "plotting": {
@@ -83,14 +83,14 @@ flex.initialize(config)
 Configuration keys:
 
 - `functional_standard`: built-in values are `"CORUM"`, `"GOBP"`, and `"PATHWAY"`. You can also provide a custom `.csv` path with a `Genes` column containing semicolon-separated gene symbols.
-- `min_genes_in_complex`: minimum number of genes a functional-standard term must contain before dataset-specific filtering.
-- `min_genes_per_complex_analysis`: minimum term size for per-complex analysis.
+- `min_genes_in_module`: minimum number of genes a functional-standard term must contain before dataset-specific filtering.
+- `min_genes_per_module_analysis`: minimum term size for per-module analysis.
 - `output_folder`: folder where plots and exported CSV files are written.
 - `analysis_genes`: `"shared"` uses only genes common to all loaded datasets; `"dataset_specific"` evaluates each dataset using its own available genes.
 - `jaccard`: when `True`, removes terms with identical used-gene sets after filtering.
 - `preprocessing.fill_na`: when `True`, fills missing values with each gene row's mean.
 - `corr_function`: correlation backend. Use `"numpy_without_mask"` for the fastest run when the matrix has no missing values, `"numpy"` for masked NumPy correlation when missing values may be present, `"numba"` for a compiled missing-value-aware implementation, or `"pandas"` for pandas pairwise-complete correlation that most closely matches R-style missing-value handling. In practice, `"numpy_without_mask"` is fastest but does not handle missing values, `"numpy"` and `"numba"` handle missing values faster than pandas, and `"pandas"` is usually slowest.
-- `per_complex.n_jobs`: worker count for per-complex analysis.
+- `per_module.n_jobs`: worker count for per-module analysis.
 - `plotting.save_plot`: when `True`, saves figures to `output_folder`.
 - `plotting.output_type`: figure extension, such as `"png"` or `"pdf"`.
 - `logging.visible_levels`: log levels to print during the run. Available values are `"STARTED"`, `"PROGRESS"`, `"DONE"`, `"INFO"`, `"WARNING"`, and `"ERROR"`. A quiet run can use `["DONE", "WARNING"]`; a more verbose run can use `["STARTED", "PROGRESS", "DONE", "INFO", "WARNING"]`.
@@ -114,7 +114,7 @@ terms, _ = flex.load_functional_standard()
 
 - loads the configured functional standard
 - creates an `all_genes` list for each term
-- applies `min_genes_in_complex`
+- applies `min_genes_in_module`
 - stores the term table for later analysis
 - returns the loaded term DataFrame and a placeholder second value
 
@@ -124,8 +124,8 @@ terms, _ = flex.load_functional_standard()
 for name, dataset in data.items():
     corr = flex.perform_corr(dataset, config["corr_function"])
     flex.pra(name, corr, is_corr=True)
-    flex.pra_percomplex(name, corr, is_corr=True)
-    flex.complex_contributions(name)
+    flex.pra_per_module(name, corr, is_corr=True)
+    flex.module_contributions(name)
     flex.mpr_prepare(name)
 ```
 
@@ -140,13 +140,13 @@ for name, dataset in data.items():
 - returns the pairwise PRA table
 - stores PRA results, AUPRC, and corrected AUPRC in the run cache
 
-`pra_percomplex(name, matrix, is_corr=True)`:
+`pra_per_module(name, matrix, is_corr=True)`:
 
 - evaluates precision-recall performance for each functional-standard term
 - returns a term-level result table
-- stores per-complex AUPRC values for plotting and export
+- stores per-module AUPRC values for plotting and export
 
-`complex_contributions(name)`:
+`module_contributions(name)`:
 
 - estimates which terms contribute most to true-positive gene pairs
 - returns a contribution table
@@ -164,10 +164,10 @@ for name, dataset in data.items():
 ```python
 flex.plot_precision_recall_curve()
 flex.plot_auc_scores()
-flex.plot_significant_complexes()
-flex.plot_percomplex_scatter(n_top=10)
-flex.plot_percomplex_scatter_bysize(n_top=10)
-flex.plot_complex_contributions()
+flex.plot_significant_modules()
+flex.plot_per_module_scatter(n_top=10)
+flex.plot_per_module_scatter_by_size(n_top=10)
+flex.plot_module_contributions()
 flex.plot_mpr_summary()
 flex.save_results_to_csv()
 ```
@@ -179,24 +179,24 @@ Global plots:
 - `plot_precision_recall_curve(line_width=2.0, hide_minor_ticks=True)` shows precision against the cumulative number of true-positive gene pairs. This is the main global performance curve; higher precision at the same true-positive count means better ranking.
 - `plot_auc_scores()` shows one bar per dataset using the global AUPRC value saved by `pra()`. Higher AUPRC means the ranked gene-pair network recovers functional-standard pairs earlier in the ranking.
 
-Per-complex plots:
+Per-module plots:
 
-- `plot_significant_complexes()` counts how many functional-standard terms pass AUPRC thresholds `0.1`, `0.2`, `0.3`, `0.4`, and `0.5`. It returns the threshold-by-dataset count table, which helps compare how many terms are strongly recovered in each dataset.
-- `plot_percomplex_scatter(n_top=10, ...)` compares per-complex AUPRC values between pairs of datasets. Each point is one functional-standard term. Points near the diagonal perform similarly in both datasets; points far from the diagonal are terms that are stronger in one dataset.
-- `plot_percomplex_scatter_bysize(n_labels=10, n_top=10, ...)` plots each term's per-complex AUPRC against the number of genes used for that term. It helps distinguish compact high-performing terms from broader modules.
-- `plot_complex_contributions(min_pairs=10, min_precision_cutoff=0.5, num_complex_to_show=10, ...)` shows which terms contribute most to true-positive gene pairs across precision cutoffs. It requires `complex_contributions(name)` first and helps identify which biological terms drive the global precision-recall curve.
+- `plot_significant_modules()` counts how many functional-standard terms pass AUPRC thresholds `0.1`, `0.2`, `0.3`, `0.4`, and `0.5`. It returns the threshold-by-dataset count table, which helps compare how many terms are strongly recovered in each dataset.
+- `plot_per_module_scatter(n_top=10, ...)` compares per-module AUPRC values between pairs of datasets. Each point is one functional-standard term. Points near the diagonal perform similarly in both datasets; points far from the diagonal are terms that are stronger in one dataset.
+- `plot_per_module_scatter_by_size(n_labels=10, n_top=10, ...)` plots each term's per-module AUPRC against the number of genes used for that term. It helps distinguish compact high-performing terms from broader modules.
+- `plot_module_contributions(min_pairs=10, min_precision_cutoff=0.5, num_module_to_show=10, ...)` shows which terms contribute most to true-positive gene pairs across precision cutoffs. It requires `module_contributions(name)` first and helps identify which biological terms drive the global precision-recall curve.
 
 mPR preparation and plots:
 
-- `mpr_prepare(name, size_th=30, auprc_th=0.4, tp_th=1, percent_th=0.1, use_corrected=True)` prepares module-level PR data for one dataset. It filters terms for module-level analysis, stores true-positive curves, complex-coverage curves, filtered variants, and mPR AUC values.
+- `mpr_prepare(name, size_th=30, auprc_th=0.4, tp_th=1, percent_th=0.1, use_corrected=True)` prepares module-level PR data for one dataset. It filters terms for module-level analysis, stores true-positive curves, module-coverage curves, filtered variants, and mPR AUC values.
 - `plot_mpr_tp_multi(dataset_names=None, colors=None, linewidth=1.8, show_filters=("all", "no_mtRibo_ETCI", "no_small_highAUPRC"))` shows true positives versus precision for one or more datasets after `mpr_prepare()`. This plot shows how many true-positive gene pairs are recovered as the precision cutoff changes.
-- `plot_mpr_complexes_multi(dataset_names=None, colors=None, linewidth=1.8, show_filters=("all", "no_mtRibo_ETCI", "no_small_highAUPRC"), show_markers="auto")` shows how many functional-standard terms are covered at each precision cutoff. This plot focuses on term coverage, not pair counts.
-- `plot_mpr_summary(dataset_names=None, colors=None, variants="unfiltered", save=True, linewidth=1.8, show_markers="auto")` creates the standard mPR true-positive, complex-coverage, and mPR AUC summary plots in one call.
+- `plot_mpr_modules_multi(dataset_names=None, colors=None, linewidth=1.8, show_filters=("all", "no_mtRibo_ETCI", "no_small_highAUPRC"), show_markers="auto")` shows how many functional-standard terms are covered at each precision cutoff. This plot focuses on term coverage, not pair counts.
+- `plot_mpr_summary(dataset_names=None, colors=None, variants="unfiltered", save=True, linewidth=1.8, show_markers="auto")` creates the standard mPR true-positive, module-coverage, and mPR AUC summary plots in one call.
 - Newer mPR functions also accept `variants`, with values `"unfiltered"`, `"without_mt_ribo_etci"`, `"without_small_high_auprc"`, or `"all"`.
 
 Export:
 
-- `save_results_to_csv()` exports cached tables such as global AUPRC values, per-complex results, contribution tables, and mPR summaries to `output_folder/csv`.
+- `save_results_to_csv()` exports cached tables such as global AUPRC values, per-module results, contribution tables, and mPR summaries to `output_folder/csv`.
 - Plot files are saved directly under `output_folder` when `plotting.save_plot` or the function-level `save` argument is enabled.
 
 ## Temporary Files

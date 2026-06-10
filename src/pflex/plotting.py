@@ -280,7 +280,7 @@ def plot_all_runs_pra(pra_list, mean_df=None, line_width=2.0, hide_minor_ticks=T
         plt.show()
     plt.close(fig)
 
-def plot_percomplex_scatter(
+def plot_per_module_scatter(
     n_top=10,
     sig_color='black',
     nonsig_color='white',
@@ -294,13 +294,13 @@ def plot_percomplex_scatter(
 ):
     config = dload("config")
     plot_config = config["plotting"]
-    rdict = dload("pra_percomplex")
+    rdict = dload("pra_per_module")
     input_colors = dload("input", "colors")
     input_colors = {_sanitize(k): v for k, v in input_colors.items()} if input_colors else {}
 
     if len(rdict) < 2:
         log.warning(
-            "Skipping plot: at least two datasets are required for per-complex scatter plot."
+            "Skipping plot: at least two datasets are required for per-module scatter plot."
         )
         return
 
@@ -333,7 +333,7 @@ def plot_percomplex_scatter(
         # Create square figure
         fig, ax = plt.subplots(figsize=(6, 6))
 
-        # Background cloud: non-significant complexes are opaque white-filled circles.
+        # Background cloud: non-significant modules are opaque white-filled circles.
         bg_sizes = (bg_df['n_used_genes'] if 'n_used_genes' in bg_df else pd.Series(1, index=bg_df.index)) * 5
         ax.scatter(
             bg_df[pair[0]], bg_df[pair[1]],
@@ -357,7 +357,7 @@ def plot_percomplex_scatter(
                 s=point_sizes, linewidth=border_width, zorder=zorder
             )
 
-        # Dataset-specific significant complexes use the dataset input color.
+        # Dataset-specific significant modules use the dataset input color.
         scatter_significant(
             significant_pair0_only,
             input_colors.get(_sanitize(pair[0]), sig_color),
@@ -368,7 +368,7 @@ def plot_percomplex_scatter(
             input_colors.get(_sanitize(pair[1]), sig_color),
             zorder=2,
         )
-        # Complexes significant in both datasets stay black to avoid ambiguous color mixing.
+        # Modules significant in both datasets stay black to avoid ambiguous color mixing.
         scatter_significant(significant_in_both, "black", zorder=3)
 
         if show_labels:
@@ -442,7 +442,7 @@ def plot_percomplex_scatter(
         
         ax.set_xlabel(f"{pair[0]} AUPRC")
         ax.set_ylabel(f"{pair[1]} AUPRC")
-        #ax.set_title(f"{pair[0]} vs {pair[1]} - Comparison of complex performance")
+        #ax.set_title(f"{pair[0]} vs {pair[1]} - Comparison of module performance")
 
         # Nature style: no grid, open top/right spines
         ax.grid(False)
@@ -453,7 +453,7 @@ def plot_percomplex_scatter(
 
         if plot_config["save_plot"]:
             output_type = plot_config["output_type"]
-            output_path = Path(config["output_folder"]) / f"percomplex_scatter_{pair[0]}_vs_{pair[1]}.{output_type}"
+            output_path = Path(config["output_folder"]) / f"per_module_scatter_{pair[0]}_vs_{pair[1]}.{output_type}"
             fig.savefig(output_path, bbox_inches="tight", format=output_type)
 
         if plot_config.get("show_plot", True):
@@ -939,7 +939,7 @@ def position_cluster_labels(cluster, cluster_id, max_y, effective_max_y, label_c
                     clip_on=True, bbox=bbox_props
                 )
 
-def plot_percomplex_scatter_bysize(
+def plot_per_module_scatter_by_size(
     n_labels=10,
     n_top=10,
     sig_color='black',
@@ -954,13 +954,13 @@ def plot_percomplex_scatter_bysize(
 ):
     config = dload("config")
     plot_config = config["plotting"]
-    rdict = dload("pra_percomplex")
+    rdict = dload("pra_per_module")
     input_colors = dload("input", "colors")
     input_colors = {_sanitize(k): v for k, v in input_colors.items()} if input_colors else {}
 
-    for key, per_complex in rdict.items():
+    for key, per_module in rdict.items():
         dataset_color = input_colors.get(_sanitize(key), sig_color)
-        sorted_pc = per_complex.sort_values(by="auc_score", ascending=False, na_position="last")
+        sorted_pc = per_module.sort_values(by="auc_score", ascending=False, na_position="last")
         top_labels, rest = sorted_pc.head(n_labels), sorted_pc.iloc[n_labels:]
 
         # Calculate data range for appropriate figure sizing
@@ -972,16 +972,16 @@ def plot_percomplex_scatter_bysize(
         fig_height = min(max(4, aspect_ratio), 8)  # Between 4-8 inches
         fig, ax = plt.subplots(figsize=(6, fig_height))
 
-        # Background: non-significant complexes are opaque white-filled circles.
+        # Background: non-significant modules are opaque white-filled circles.
         ax.scatter(
             rest.auc_score, rest.n_used_genes,
             facecolors=nonsig_color, edgecolors=nonsig_border_color,
             linewidth=nonsig_border_width, s=rest.n_used_genes * 5,
-            label="Other Complexes",
+            label="Other Modules",
             zorder=0
         )
 
-        # Top N/significant complexes are filled black circles.
+        # Top N/significant modules are filled black circles.
         ax.scatter(
             top_labels.auc_score, top_labels.n_used_genes,
             facecolors=dataset_color, edgecolors=dataset_color,
@@ -1011,7 +1011,7 @@ def plot_percomplex_scatter_bysize(
         from matplotlib.ticker import MaxNLocator
         ax.yaxis.set_major_locator(MaxNLocator(integer=True))
         ax.set_xlabel("AUPRC")
-        ax.set_ylabel("Number of genes in the complex")
+        ax.set_ylabel("Number of genes in the module")
 
         # Configure axes with proper boundaries
         ax.grid(visible=False, which='both', axis='both')
@@ -1030,17 +1030,17 @@ def plot_percomplex_scatter_bysize(
 
         if plot_config["save_plot"]:
             output_type = plot_config["output_type"]
-            output_path = Path(config["output_folder"]) / f"percomplex_scatter_by_complexsize_{key}.{output_type}"
+            output_path = Path(config["output_folder"]) / f"per_module_scatter_by_modulesize_{key}.{output_type}"
             fig.savefig(output_path, bbox_inches="tight", format=output_type)
 
         if plot_config.get("show_plot", True):
             plt.show()
         plt.close(fig)
 
-def plot_complex_contributions(
+def plot_module_contributions(
     min_pairs=10,
     min_precision_cutoff=0.5,
-    num_complex_to_show=10,
+    num_module_to_show=10,
     y_lim=None,
     fig_title=None,
     fig_labs=['Fraction of TP', 'Precision'],
@@ -1048,7 +1048,7 @@ def plot_complex_contributions(
 ):
     config = dload("config")
     plot_config = config["plotting"]
-    plot_data_dict = dload("complex_contributions")
+    plot_data_dict = dload("module_contributions")
 
     for key, plot_data in plot_data_dict.items():
         s = plot_data.set_index('Name').sum()
@@ -1075,11 +1075,11 @@ def plot_complex_contributions(
         if sum(ind_for_mean) == 1:
             log.info("Only one value above 'min.precision.cutoff'"); return False
 
-        a = x_df.loc[:, ind_for_mean].mean(axis=1).sort_values()[-num_complex_to_show:]
+        a = x_df.loc[:, ind_for_mean].mean(axis=1).sort_values()[-num_module_to_show:]
         subset = x_df.loc[a.index, :]
 
         cmap = plt.get_cmap()
-        colors = cmap(np.linspace(0, 1, num_complex_to_show))
+        colors = cmap(np.linspace(0, 1, num_module_to_show))
         colors = np.vstack(([0.5, 0.5, 0.5, 1.0], colors))  # 'others' + top K
         others = pd.DataFrame(1 - subset.sum(axis=0), columns=['others']).T
         merged = pd.concat([others, subset], ignore_index=False)
@@ -1106,7 +1106,7 @@ def plot_complex_contributions(
         ax[0].set_ylim(*y_lim)
         ax[0].set_xlabel(fig_labs[0])
         ax[0].set_ylabel(fig_labs[1])
-        #ax[0].set_title(fig_title if fig_title else f"{key} - Contribution of complexes")
+        #ax[0].set_title(fig_title if fig_title else f"{key} - Contribution of modules")
         for i in range(X.shape[0]):
             ax[0].fill_betweenx(y, x1[i, :], x2[i, :], color=colors[i], edgecolor='white')
 
@@ -1122,7 +1122,7 @@ def plot_complex_contributions(
             loc='center',
             ncol=ncols,
             frameon=False,
-            title="Complexes",
+            title="Modules",
             fontsize=6, title_fontsize=6,
             handlelength=0.9, handletextpad=0.25,
             borderaxespad=0.0,
@@ -1135,17 +1135,17 @@ def plot_complex_contributions(
         if plot_config["save_plot"]:
             output_type  = plot_config["output_type"]
             output_folder= Path(config["output_folder"])
-            output_path  = output_folder / f"complex_contributions_{key}.{output_type}"
+            output_path  = output_folder / f"module_contributions_{key}.{output_type}"
             fig.savefig(output_path, bbox_inches="tight", format=output_type)
 
         if plot_config.get("show_plot", True):
             plt.show()
         plt.close(fig)
 
-def plot_significant_complexes():
+def plot_significant_modules():
     config = dload("config")
     plot_config = config["plotting"]
-    pra_percomplex = dload("pra_percomplex")
+    pra_per_module = dload("pra_per_module")
     input_colors = dload("input", "colors")
     
     # Sanitize color keys
@@ -1153,24 +1153,24 @@ def plot_significant_complexes():
         input_colors = {_sanitize(k): v for k, v in input_colors.items()}
 
     thresholds = [0.1, 0.2, 0.3, 0.4, 0.5]
-    if not isinstance(pra_percomplex, dict) or not pra_percomplex:
-        log.warning("No per-complex PRA data found. Run pra_percomplex() first.")
+    if not isinstance(pra_per_module, dict) or not pra_per_module:
+        log.warning("No per-module PRA data found. Run pra_per_module() first.")
         return pd.DataFrame(index=thresholds)
 
-    datasets = list(pra_percomplex.keys())
+    datasets = list(pra_per_module.keys())
     num_datasets = len(datasets)
 
     if num_datasets == 0:
         return pd.DataFrame(index=thresholds)
 
     df = pd.DataFrame(index=thresholds)
-    for key, complex_data in pra_percomplex.items():
-        if "corrected_auc_score" in complex_data.columns:
+    for key, module_data in pra_per_module.items():
+        if "corrected_auc_score" in module_data.columns:
             score_col = "corrected_auc_score"
         else:
             score_col = "auc_score"
 
-        df[key] = [complex_data.query(f'{score_col} >= {t}').shape[0] for t in thresholds]
+        df[key] = [module_data.query(f'{score_col} >= {t}').shape[0] for t in thresholds]
 
     fig, ax = plt.subplots()
 
@@ -1199,9 +1199,9 @@ def plot_significant_complexes():
     ax.set_xticks(np.arange(len(thresholds)) + (num_datasets - 1) * bar_width / 2)
     ax.set_xticklabels([str(t) for t in thresholds], rotation=0, ha='center')
 
-    #ax.set_title("Number of significant complexes above AUPRC thresholds")
+    #ax.set_title("Number of significant modules above AUPRC thresholds")
     ax.set_xlabel("AUPRC thresholds")
-    ax.set_ylabel("Number of complexes")
+    ax.set_ylabel("Number of modules")
 
     # Nature style: no grid; open top/right spines
     ax.grid(False)
@@ -1214,7 +1214,7 @@ def plot_significant_complexes():
     if plot_config["save_plot"]:
         output_type = plot_config["output_type"]
         output_folder = Path(config["output_folder"])
-        output_path = output_folder / f"number_of_significant_complexes.{output_type}"
+        output_path = output_folder / f"number_of_significant_modules.{output_type}"
         plt.savefig(output_path, bbox_inches='tight', format=output_type)
 
     if plot_config.get("show_plot", True):
@@ -1288,8 +1288,8 @@ def plot_auc_scores():
     return pra_dict
 
 
-def plot_mpr_complex_auc_scores(variant: str = "unfiltered", save=None, outname=None):
-    """Plot AUC values for the mPR complexes curve (Fig 1F-style).
+def plot_mpr_module_auc_scores(variant: str = "unfiltered", save=None, outname=None):
+    """Plot AUC values for the mPR modules curve (Fig 1F-style).
 
     Requires `mpr_prepare()` to have been run for each dataset.
 
@@ -1310,7 +1310,7 @@ def plot_mpr_complex_auc_scores(variant: str = "unfiltered", save=None, outname=
     """
     config = dload("config")
     plot_config = config["plotting"]
-    mpr_auc_dict = dload("mpr_complexes_auc")
+    mpr_auc_dict = dload("mpr_modules_auc")
     input_colors = dload("input", "colors")
 
     if input_colors:
@@ -1318,7 +1318,7 @@ def plot_mpr_complex_auc_scores(variant: str = "unfiltered", save=None, outname=
 
     if not isinstance(mpr_auc_dict, dict) or not mpr_auc_dict:
         log.warning(
-            "No mPR complexes AUC data found. Run mpr_prepare() first (it stores 'mpr_complexes_auc')."
+            "No mPR modules AUC data found. Run mpr_prepare() first (it stores 'mpr_modules_auc')."
         )
         return pd.Series(dtype=float)
 
@@ -1339,7 +1339,7 @@ def plot_mpr_complex_auc_scores(variant: str = "unfiltered", save=None, outname=
 
     if not auc_by_dataset:
         log.warning(
-            f"No mPR complex AUC values found for variant '{variant}'. "
+            f"No mPR module AUC values found for variant '{variant}'. "
             f"Available variants: {list(PUBLIC_MPR_VARIANTS.keys())}"
         )
         return pd.Series(dtype=float)
@@ -1374,7 +1374,7 @@ def plot_mpr_complex_auc_scores(variant: str = "unfiltered", save=None, outname=
 
     ymax = max([v for v in auc_scores if np.isfinite(v)], default=0.0)
     ax.set_ylim(0, ymax + 0.01)
-    ax.set_ylabel("mPR complexes AUC")
+    ax.set_ylabel("mPR modules AUC")
     plt.xticks(rotation=45, ha="right")
 
     # Styling consistent with other plots
@@ -1389,7 +1389,7 @@ def plot_mpr_complex_auc_scores(variant: str = "unfiltered", save=None, outname=
         output_folder = Path(config["output_folder"])
         output_folder.mkdir(parents=True, exist_ok=True)
         if outname is None:
-            outname = f"mpr_complexes_auc_{variant_key}.{output_type}"
+            outname = f"mpr_modules_auc_{variant_key}.{output_type}"
         output_path = Path(outname)
         if len(output_path.parts) == 1:
             output_path = output_folder / outname
@@ -1402,9 +1402,9 @@ def plot_mpr_complex_auc_scores(variant: str = "unfiltered", save=None, outname=
     return s
 
 
-def plot_mpr_complexes_auc_scores(filter_key: str = "all"):
-    """Backward-compatible wrapper for plot_mpr_complex_auc_scores()."""
-    return plot_mpr_complex_auc_scores(
+def plot_mpr_modules_auc_scores(filter_key: str = "all"):
+    """Backward-compatible wrapper for plot_mpr_module_auc_scores()."""
+    return plot_mpr_module_auc_scores(
         variant=_legacy_filter_to_variant(filter_key, default="unfiltered")
     )
 
@@ -1412,17 +1412,17 @@ def plot_mpr_complexes_auc_scores(filter_key: str = "all"):
 # mPR plots (Fig. 1E and Fig. 1F)
 # -----------------------------------------------------------------------------
 
-def plot_mpr_complexes(name, ax=None, save=True, outname=None):
+def plot_mpr_modules(name, ax=None, save=True, outname=None):
     """
     Fig. 1F-style module-level PR:
-      x-axis: number of covered complexes (log)
+      x-axis: number of covered modules (log)
       y-axis: precision cutoff
       x tick labels: 0, 2, 20, 200
     """
     mpr = dload("mpr", name)
     if mpr is None:
         raise RuntimeError(
-            f"plot_mpr_complexes(): mPR data for dataset '{name}' not found. "
+            f"plot_mpr_modules(): mPR data for dataset '{name}' not found. "
             "Run `mpr_prepare` first."
         )
 
@@ -1450,7 +1450,7 @@ def plot_mpr_complexes(name, ax=None, save=True, outname=None):
             continue
         cov = np.asarray(coverage[key], dtype=float)
 
-        # keep only positive coverage up to 200 complexes
+        # keep only positive coverage up to 200 modules
         mask = (cov > 0) & (cov <= 200)
         if not mask.any():
             continue
@@ -1460,11 +1460,11 @@ def plot_mpr_complexes(name, ax=None, save=True, outname=None):
 
         ax.plot(cov_plot, prec_plot, label=pretty, **styles.get(key, {}))
 
-    # log x-axis, show up to 200 complexes
+    # log x-axis, show up to 200 modules
     ax.set_xscale("log")
     ax.set_xlim(1, 200)  # 1 on log scale will be labelled as "0" below
 
-    ax.set_xlabel("Number of covered complexes")
+    ax.set_xlabel("Number of covered modules")
     ax.set_ylabel("Precision cutoff")
     ax.set_ylim(0.0, 1.05)
 
@@ -1475,11 +1475,11 @@ def plot_mpr_complexes(name, ax=None, save=True, outname=None):
     ax.set_xticklabels(tick_labels)
 
     ax.legend(frameon=False)
-    ax.set_title(f"[{name}] 19Q2 – mPR (#complexes vs precision)")
+    ax.set_title(f"[{name}] 19Q2 – mPR (#modules vs precision)")
 
     if save:
         if outname is None:
-            outname = f"mpr_complexes_{name}.pdf"
+            outname = f"mpr_modules_{name}.pdf"
         fig.tight_layout()
         fig.savefig(outname)
 
@@ -1863,7 +1863,7 @@ def plot_mpr_tp_multi(
         variants=_legacy_filters_to_variants(show_filters),
     )
 
-def plot_mpr_complex_coverage_curve(
+def plot_mpr_module_coverage_curve(
     dataset_names=None,
     colors=None,
     ax=None,
@@ -1875,7 +1875,7 @@ def plot_mpr_complex_coverage_curve(
     marker_size=20,
 ):
     """
-    Plot mPR complex-coverage vs precision curves for multiple datasets.
+    Plot mPR module-coverage vs precision curves for multiple datasets.
     
     Can auto-detect datasets or use provided dataset names.
     Each dataset gets one color, each filter type gets one line style.
@@ -2042,7 +2042,7 @@ def plot_mpr_complex_coverage_curve(
     # Configure axes
     ax.set_xscale("log")
     ax.set_xlim(1, x_max_plot)
-    ax.set_xlabel("# complexes")
+    ax.set_xlabel("# modules")
     ax.set_ylabel("Precision")
     ax.set_ylim(0.0, 1.05)
 
@@ -2061,7 +2061,7 @@ def plot_mpr_complex_coverage_curve(
     if save:
         output_type = plot_config.get("output_type", "pdf")
         if outname is None:
-            outname = f"mpr_complexes_multi.{output_type}"
+            outname = f"mpr_modules_multi.{output_type}"
         
         # Check if outname is just a filename or a full path
         outpath = Path(outname)
@@ -2075,7 +2075,7 @@ def plot_mpr_complex_coverage_curve(
     return ax
 
 
-def plot_mpr_complexes_multi(
+def plot_mpr_modules_multi(
     dataset_names=None,
     colors=None,
     ax=None,
@@ -2086,8 +2086,8 @@ def plot_mpr_complexes_multi(
     show_markers="auto",
     marker_size=20,
 ):
-    """Backward-compatible wrapper for plot_mpr_complex_coverage_curve()."""
-    return plot_mpr_complex_coverage_curve(
+    """Backward-compatible wrapper for plot_mpr_module_coverage_curve()."""
+    return plot_mpr_module_coverage_curve(
         dataset_names=dataset_names,
         colors=colors,
         ax=ax,
@@ -2110,7 +2110,7 @@ def plot_mpr_summary(
     marker_size=20,
     auc_variant=None,
 ):
-    """Generate the standard mPR summary plots and return complex AUC values."""
+    """Generate the standard mPR summary plots and return module AUC values."""
     plot_mpr_true_positive_curve(
         dataset_names=dataset_names,
         colors=colors,
@@ -2118,7 +2118,7 @@ def plot_mpr_summary(
         linewidth=linewidth,
         variants=variants,
     )
-    plot_mpr_complex_coverage_curve(
+    plot_mpr_module_coverage_curve(
         dataset_names=dataset_names,
         colors=colors,
         save=save,
@@ -2132,7 +2132,7 @@ def plot_mpr_summary(
         variant_keys = _normalize_mpr_variants(variants)
         auc_variant = INTERNAL_MPR_VARIANTS.get(variant_keys[0], "unfiltered")
 
-    return plot_mpr_complex_auc_scores(variant=auc_variant, save=save)
+    return plot_mpr_module_auc_scores(variant=auc_variant, save=save)
 
 def _add_vertical_legend(ax, dataset_names, colors, variant_keys, linewidth):
     """
