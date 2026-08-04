@@ -1031,9 +1031,8 @@ def save_results_to_csv(categories = ["module_contributions", "pr_auc", "pra_per
             continue
 
         if category == "mpr_modules_auc" and isinstance(data, dict):
-            # Dict[dataset_name -> Dict[variant_key -> auc]]
             try:
-                df = pd.DataFrame.from_dict(data, orient="index")
+                df = pd.Series(data, name="AUC", dtype=float).to_frame()
                 df.index.name = "Dataset"
                 csv_path = output_folder / f"{category}.csv"
                 df.to_csv(csv_path, index=True)
@@ -1075,7 +1074,7 @@ def save_results_to_csv(categories = ["module_contributions", "pr_auc", "pra_per
     log.done("Results saved to CSV files in the output folder.")
 
 # -----------------------------------------------------------------------------
-# mPR preparation (module-level precision–recall, Fig. 1E / 1F)
+# Module-level precision-recall and optional complex-filter sensitivity analyses
 # -----------------------------------------------------------------------------
 
 
@@ -1088,7 +1087,7 @@ def _mpr_get_mtRibo_ETCI_ids(terms_like):
       - OR Name contains '55S'
     """
     if "Name" not in terms_like.columns:
-        raise KeyError("mpr_prepare(): expected a 'Name' column in the CORUM terms.")
+        raise KeyError("Complex filtering requires a 'Name' column in the term table.")
 
     name = terms_like["Name"].astype(str)
     mask = name.str.contains(
@@ -1109,7 +1108,7 @@ def _mpr_get_small_high_auprc_ids(
     """
     if "Length" not in pra_per_module.columns:
         raise KeyError(
-            "mpr_prepare(): expected a 'Length' column in the per-module table."
+            "Complex filtering requires a 'Length' column in the per-module table."
         )
 
     if use_corrected and "corrected_auc_score" in pra_per_module.columns:
@@ -1118,7 +1117,8 @@ def _mpr_get_small_high_auprc_ids(
         score_col = "auc_score"
     else:
         raise KeyError(
-            "mpr_prepare(): expected 'corrected_auc_score' or 'auc_score' in the per-module table."
+            "Complex filtering requires 'corrected_auc_score' or 'auc_score' "
+            "in the per-module table."
         )
 
     size_mask = pra_per_module["Length"] < size_th
@@ -1153,7 +1153,7 @@ def _mpr_build_pairs(pra, removed_ids=None, ascending=False):
     """
     if "module_id" not in pra.columns and "module_ids" not in pra.columns:
         raise RuntimeError(
-            "mpr_prepare(): expected a 'module_id' or 'module_ids' column in 'pra'."
+            "mPR analysis requires a 'module_id' or 'module_ids' column in 'pra'."
         )
 
     removed_ids = set(int(x) for x in (removed_ids or []))
@@ -1167,7 +1167,7 @@ def _mpr_build_pairs(pra, removed_ids=None, ascending=False):
         cid_col = "module_ids"
 
     if "score" not in df.columns:
-        raise RuntimeError("mpr_prepare(): expected a 'score' column in 'pra'.")
+        raise RuntimeError("mPR analysis requires a 'score' column in 'pra'.")
 
     def normalize_ids(cell):
         """Parse module IDs from various formats."""
@@ -1517,23 +1517,11 @@ def _mpr_modules_auc(
 
 def mpr_prepare(
     name,
-    size_th=30,
-    auprc_th=0.4,
     tp_th=1,
     percent_th=0.1,
-    use_corrected=True,
 ):
-    """
-    Prepare data for Fig. 1E (TP vs precision) and Fig. 1F (mPR) for dataset `name`.
-
-    Stores an 'mpr' object with:
-      - precision_cutoffs
-      - tp_curves[label]         : full PR (TP vs precision) per filter
-      - coverage_curves[label]   : #covered modules per cutoff per filter
-      - filters metadata
-    """
+    """Prepare the unfiltered module-coverage mPR curve for one dataset."""
     pra = dload("pra", name)
-    pra_per_module = dload("pra_per_module", name)
     terms = dload("common", f"terms_{name}")
     if not isinstance(terms, pd.DataFrame):
         # Fallback for backward compatibility
@@ -1543,11 +1531,6 @@ def mpr_prepare(
         raise RuntimeError(
             f"mpr_prepare(): PRA data for dataset '{name}' not found "
             "(dload('pra', name))."
-        )
-    if pra_per_module is None or not isinstance(pra_per_module, pd.DataFrame) or pra_per_module.empty:
-        raise RuntimeError(
-            f"mpr_prepare(): per-module PRA data for dataset '{name}' not found "
-            "(dload('pra_per_module', name))."
         )
     if terms is None or not isinstance(terms, pd.DataFrame) or terms.empty:
         raise RuntimeError(
@@ -1562,97 +1545,243 @@ def mpr_prepare(
     else:
         pra = pra.reset_index(drop=True)
 
-    # filters
-    mtRibo_ids = _mpr_get_mtRibo_ETCI_ids(pra_per_module)
-    small_hi_ids = _mpr_get_small_high_auprc_ids(
+    pairs = _mpr_build_pairs(pra, ascending=ascending)
+    precision_cutoffs = _mpr_precision_cutoffs_from_pairs(pairs)
+    coverage = _mpr_coverage_for_pairs(
+        pairs,
+        precision_cutoffs,
+        terms,
+        ascending=ascending,
+        tp_th=tp_th,
+        percent_th=percent_th,
+    )
+    modules_auc = _mpr_modules_auc(
+        coverage,
+        precision_cutoffs,
+        max_modules=200.0,
+    )
+
+    mpr_data = {
+        "precision_cutoffs": precision_cutoffs,
+        "coverage_curve": coverage,
+        "modules_auc": modules_auc,
+        "parameters": {
+            "percent_th": float(percent_th),
+            "tp_th": int(tp_th),
+        },
+    }
+
+    dsave(mpr_data, "mpr", name)
+    dsave(mpr_data["modules_auc"], "mpr_modules_auc", name)
+    return mpr_data
+
+
+FILTER_VARIANTS = (
+    "all_complexes",
+    "without_mt_ribo_etci",
+    "without_small_high_auprc",
+)
+
+
+def _mpr_coverage_for_pairs(
+    pairs,
+    precision_cutoffs,
+    terms,
+    ascending=False,
+    tp_th=1,
+    percent_th=0.1,
+):
+    """Compute a monotone module-coverage curve for a filtered ranking."""
+    contributions = _mpr_stepwise_contributions(
+        pairs,
+        precision_cutoffs,
+        ascending=ascending,
+    )
+    coverage = _mpr_module_coverage(
+        contributions,
+        terms,
+        tp_th=tp_th,
+        percent_th=percent_th,
+    )
+    if coverage.size > 0:
+        coverage = np.maximum.accumulate(coverage[::-1])[::-1]
+    return coverage
+
+
+def _filter_sets_for_dataset(
+    pra_per_module,
+    size_th=30,
+    auprc_th=0.4,
+    use_corrected=True,
+):
+    """Return the three predefined complex sets used in filter comparisons."""
+    mt_ribo_etci_ids = _mpr_get_mtRibo_ETCI_ids(pra_per_module)
+    small_high_auprc_ids = _mpr_get_small_high_auprc_ids(
         pra_per_module,
         size_th=size_th,
         auprc_th=auprc_th,
         use_corrected=use_corrected,
     )
-
-    filter_sets = {
-        "all": set(),
-        "no_mtRibo_ETCI": set(mtRibo_ids),
-        "no_small_highAUPRC": set(small_hi_ids),
+    return {
+        "all_complexes": set(),
+        "without_mt_ribo_etci": set(mt_ribo_etci_ids),
+        "without_small_high_auprc": set(small_high_auprc_ids),
     }
 
-    tp_curves = {}
-    coverage_curves = {}
-    modules_auc = {}
-    precision_cutoffs = None
 
-    for label, removed in filter_sets.items():
-        # 1) Build pairs table after removing modules in `removed`
-        pairs = _mpr_build_pairs(pra, removed_ids=removed, ascending=ascending)
+def _load_filter_inputs(name, caller, require_terms=False):
+    """Load and validate inputs shared by the lazy filter analyses."""
+    pra = dload("pra", name)
+    pra_per_module = dload("pra_per_module", name)
+    if not isinstance(pra, pd.DataFrame) or pra.empty:
+        raise RuntimeError(
+            f"{caller}(): PRA data for dataset '{name}' not found. "
+            f"Run pra('{name}', ...) first."
+        )
+    if not isinstance(pra_per_module, pd.DataFrame) or pra_per_module.empty:
+        raise RuntimeError(
+            f"{caller}(): per-module PRA data for dataset '{name}' not found. "
+            f"Run pra_per_module('{name}', ...) first."
+        )
 
-        true = pairs["true"].to_numpy(dtype=int)
-        n = len(true)
-        if n == 0 or true.sum() == 0:
-            tp_curves[label] = {
-                "tp": np.array([], dtype=float),
-                "precision": np.array([], dtype=float),
-            }
-            coverage_curves[label] = np.zeros(0, dtype=float)
-            modules_auc[label] = float("nan")
-            continue
+    terms = None
+    if require_terms:
+        terms = dload("common", f"terms_{name}")
+        if not isinstance(terms, pd.DataFrame):
+            terms = dload("common", "terms")
+        if not isinstance(terms, pd.DataFrame) or terms.empty:
+            raise RuntimeError(
+                f"{caller}(): functional standard terms for dataset '{name}' not found."
+            )
+    return pra, pra_per_module, terms
 
-        tp_cum = true.cumsum()
-        denom = np.arange(n, dtype=float) + 1.0
-        precision = tp_cum / denom
 
-        # full PR: only positions where we add a TP
-        mask_tp = true == 1
-        tp_full = tp_cum[mask_tp]
-        prec_full = precision[mask_tp]
-        tp_curves[label] = {"tp": tp_full, "precision": prec_full}
+def _tp_precision_curve(pairs):
+    """Return TP-versus-precision values at true-positive ranking positions."""
+    true = pairs["true"].to_numpy(dtype=int)
+    if true.size == 0 or true.sum() == 0:
+        return {
+            "tp": np.array([], dtype=float),
+            "precision": np.array([], dtype=float),
+        }
+    tp_cumulative = true.cumsum()
+    precision = tp_cumulative / (np.arange(true.size, dtype=float) + 1.0)
+    true_positive_rows = true == 1
+    return {
+        "tp": tp_cumulative[true_positive_rows],
+        "precision": precision[true_positive_rows],
+    }
 
-        # common precision grid from 'all'
-        if precision_cutoffs is None:
-            precision_cutoffs = _mpr_precision_cutoffs_from_pairs(pairs)
 
-        contrib_df = _mpr_stepwise_contributions(
-            pairs,
-            precision_cutoffs,
+def globalpr_filter(
+    name,
+    size_th=30,
+    auprc_th=0.4,
+    use_corrected=True,
+):
+    """Lazily compute the three predefined complex-filter global PR curves."""
+    pra, pra_per_module, _ = _load_filter_inputs(name, "globalpr_filter")
+    ascending = _sort_ascending_for_dataset(name)
+    filter_sets = _filter_sets_for_dataset(
+        pra_per_module,
+        size_th=size_th,
+        auprc_th=auprc_th,
+        use_corrected=use_corrected,
+    )
+    curves = {
+        variant: _tp_precision_curve(
+            _mpr_build_pairs(pra, removed_ids=removed, ascending=ascending)
+        )
+        for variant, removed in filter_sets.items()
+    }
+    result = {
+        "curves": curves,
+        "excluded_complexes": {
+            variant: sorted(removed) for variant, removed in filter_sets.items()
+        },
+        "parameters": {
+            "size_th": int(size_th),
+            "auprc_th": float(auprc_th),
+            "use_corrected": bool(use_corrected),
+        },
+    }
+    dsave(result, "globalpr_filter", name)
+    return result
+
+
+def mpr_filter(
+    name,
+    size_th=30,
+    auprc_th=0.4,
+    tp_th=1,
+    percent_th=0.1,
+    use_corrected=True,
+):
+    """Lazily compute the three predefined complex-filter mPR curves."""
+    pra, pra_per_module, terms = _load_filter_inputs(
+        name,
+        "mpr_filter",
+        require_terms=True,
+    )
+    expected_base_parameters = {
+        "percent_th": float(percent_th),
+        "tp_th": int(tp_th),
+    }
+    base = dload("mpr", name)
+    if (
+        not isinstance(base, dict)
+        or "coverage_curve" not in base
+        or base.get("parameters") != expected_base_parameters
+    ):
+        base = mpr_prepare(name, tp_th=tp_th, percent_th=percent_th)
+
+    ascending = _sort_ascending_for_dataset(name)
+    precision_cutoffs = np.asarray(base["precision_cutoffs"], dtype=float)
+    filter_sets = _filter_sets_for_dataset(
+        pra_per_module,
+        size_th=size_th,
+        auprc_th=auprc_th,
+        use_corrected=use_corrected,
+    )
+    coverage_curves = {
+        "all_complexes": np.asarray(base["coverage_curve"], dtype=float),
+    }
+    modules_auc = {"all_complexes": float(base["modules_auc"])}
+    for variant in FILTER_VARIANTS[1:]:
+        pairs = _mpr_build_pairs(
+            pra,
+            removed_ids=filter_sets[variant],
             ascending=ascending,
         )
-        cov = _mpr_module_coverage(
-            contrib_df,
+        coverage = _mpr_coverage_for_pairs(
+            pairs,
+            precision_cutoffs,
             terms,
+            ascending=ascending,
             tp_th=tp_th,
             percent_th=percent_th,
         )
-        # precision_cutoffs are sorted ascending (low → high).
-        # Coverage must be non-increasing in that direction: a more permissive
-        # threshold (lower precision) should never yield fewer covered terms.
-        # The independent greedy allocation per cutoff can violate this, so
-        # enforce monotonicity by propagating the max from right to left.
-        if cov.size > 0:
-            cov = np.maximum.accumulate(cov[::-1])[::-1]
-        coverage_curves[label] = cov
-        modules_auc[label] = _mpr_modules_auc(
-            cov,
+        coverage_curves[variant] = coverage
+        modules_auc[variant] = _mpr_modules_auc(
+            coverage,
             precision_cutoffs,
             max_modules=200.0,
         )
 
-    mpr_data = {
+    result = {
         "precision_cutoffs": precision_cutoffs,
-        "tp_curves": tp_curves,
         "coverage_curves": coverage_curves,
         "modules_auc": modules_auc,
-        "filters": {
-            "no_mtRibo_ETCI": sorted(mtRibo_ids),
-            "no_small_highAUPRC": sorted(small_hi_ids),
-            "size_th": size_th,
-            "auprc_th": auprc_th,
-            "percent_th": percent_th,
-            "tp_th": tp_th,
+        "excluded_complexes": {
+            variant: sorted(removed) for variant, removed in filter_sets.items()
+        },
+        "parameters": {
+            "size_th": int(size_th),
+            "auprc_th": float(auprc_th),
+            "percent_th": float(percent_th),
+            "tp_th": int(tp_th),
             "use_corrected": bool(use_corrected),
         },
     }
-
-    dsave(mpr_data, "mpr", name)
-
-    # Convenience: store AUCs as their own category for easy export / plotting.
-    dsave(modules_auc, "mpr_modules_auc", name)
+    dsave(result, "mpr_filter", name)
+    return result

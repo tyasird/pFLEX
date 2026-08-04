@@ -11,11 +11,11 @@ inputs = {
         "sort": "high",
         "color": "#4E79A7",
     },
-    "Soft Tissue": {
-        "path": flex.example_input_path("soft_tissue_cell_lines_corum_genes.parquet"),
-        "sort": "high",
-        "color": "#F28E2B",
-    },
+    # "Soft Tissue": {
+    #     "path": flex.example_input_path("soft_tissue_cell_lines_corum_genes.parquet"),
+    #     "sort": "high",
+    #     "color": "#F28E2B",
+    # },
 }
 
 
@@ -70,7 +70,17 @@ flex.plot_significant_modules()
 flex.plot_per_module_scatter(n_top=10)
 flex.plot_per_module_scatter_by_size(n_top=10)
 flex.plot_module_contributions()
-flex.plot_mpr_summary()
+mpr_auc_by_dataset = flex.plot_mpr_summary()
+
+#%%
+# Optional complex-filter sensitivity analysis. These calculations are kept
+# separate because they are not needed for the standard global PR or mPR plots.
+# for name in data:
+#     flex.mpr_filter(name)
+#     flex.globalpr_filter(name)
+#
+# flex.plot_mpr_filter()
+# flex.plot_globalpr_filter()
 
 #%%
 # Save results to CSV

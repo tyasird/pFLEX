@@ -155,6 +155,27 @@ flex.plot_mpr_summary()
 flex.save_results_to_csv()
 ```
 
+`mpr_prepare()` computes only the standard, unfiltered module-coverage mPR
+curve. `plot_mpr_summary()` plots that curve and the corresponding dataset-level
+mPR AUC values; it does not produce a duplicate global precision-recall plot.
+
+The predefined complex-filter comparisons are optional and computed lazily:
+
+```python
+for name in data:
+    flex.mpr_filter(name)
+    flex.globalpr_filter(name)
+
+# Compare all complexes, removal of mtRibo / ETC I, and removal of
+# small high-AUPRC complexes.
+mpr_ax, mpr_filter_auc = flex.plot_mpr_filter()
+globalpr_ax = flex.plot_globalpr_filter()
+```
+
+The calculation and plotting calls are intentionally separate. Calling a
+filter plotting function before its matching calculation raises an error that
+identifies the required preparation function.
+
 See the [User Guide](https://tyasird.github.io/pFLEX/user-guide/) for a detailed explanation of every input field, configuration key, function, return value, and output.
 
 ---

@@ -2,11 +2,13 @@
 from itertools import combinations
 from pathlib import Path
 import re
+from math import ceil
 
 # Third-party libraries
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from adjustText import adjust_text
 from matplotlib import patches
 from matplotlib.cm import get_cmap
 from matplotlib.lines import Line2D
@@ -40,6 +42,208 @@ except Exception:
 # Local modules
 from .utils import dload, _sanitize
 from .logging_config import log
+
+
+def _truncate_label(label, max_chars=10, suffix="."):
+    label = "" if pd.isna(label) else str(label)
+    return label[:max_chars] + suffix if len(label) > max_chars else label
+
+
+def _place_scatter_labels(
+    ax,
+    label_points,
+    label_color="black",
+    show_text_background=False,
+    fontsize=4,
+    max_label_chars=10,
+    suffix=".",
+    connector_linewidth=0.5,
+):
+    """Place scatter labels in open space while keeping connectors to points."""
+    if not label_points:
+        return []
+
+    x_min, x_max = ax.get_xlim()
+    y_min, y_max = ax.get_ylim()
+    x_range = x_max - x_min if x_max > x_min else 1.0
+    y_range = y_max - y_min if y_max > y_min else 1.0
+    x_pad = x_range * 0.015
+    y_pad = y_range * 0.015
+    x_step = x_range * 0.025
+    y_step = y_range * 0.035
+    bbox_props = (
+        dict(facecolor="white", edgecolor="none", pad=1)
+        if show_text_background
+        else None
+    )
+
+    texts = []
+    free_texts = []
+    free_point_x = []
+    free_point_y = []
+    valid_points = [
+        (i, x, y)
+        for i, (x, y, _) in enumerate(label_points)
+        if not pd.isna(x) and not pd.isna(y)
+    ]
+    same_x_threshold = x_range * 0.025
+    dense_label_positions = {}
+    remaining = sorted(valid_points, key=lambda item: (item[1], -item[2]))
+
+    while remaining:
+        seed_i, seed_x, _ = remaining.pop(0)
+        group = [(seed_i, seed_x)]
+        keep = []
+        for point_i, point_x_value, point_y_value in remaining:
+            if abs(point_x_value - seed_x) <= same_x_threshold:
+                group.append((point_i, point_x_value))
+            else:
+                keep.append((point_i, point_x_value, point_y_value))
+        remaining = keep
+
+        if len(group) < 8:
+            continue
+
+        ordered_group = sorted(
+            [point_i for point_i, _ in group],
+            key=lambda point_i: label_points[point_i][1],
+            reverse=True,
+        )
+        group_x = np.mean([label_points[point_i][0] for point_i in ordered_group])
+        group_y_values = [label_points[point_i][1] for point_i in ordered_group]
+        side = 1 if group_x <= (x_min + x_max) / 2 else -1
+        n_columns = min(4, max(2, ceil(len(ordered_group) / 14)))
+        row_count = ceil(len(ordered_group) / n_columns)
+        y_low = max(y_min + y_pad, min(group_y_values) - y_range * 0.08)
+        y_high = min(y_max - y_pad, max(group_y_values) + y_range * 0.08)
+        min_needed_height = max(row_count - 1, 1) * y_range * 0.04
+        if y_high - y_low < min_needed_height:
+            y_low = y_min + y_pad
+            y_high = y_max - y_pad
+
+        for group_order, point_i in enumerate(ordered_group):
+            column = group_order % n_columns
+            row = group_order // n_columns
+            if row_count <= 1:
+                label_y = (y_low + y_high) / 2
+            else:
+                label_y = y_high - (row * (y_high - y_low) / (row_count - 1))
+
+            label_x = group_x + side * x_range * (0.12 + column * 0.12)
+            label_x = min(max(label_x, x_min + x_pad), x_max - x_pad)
+            dense_label_positions[point_i] = (label_x, label_y, side)
+
+    for i, (x, y, label) in enumerate(label_points):
+        if pd.isna(x) or pd.isna(y):
+            continue
+
+        if i in dense_label_positions:
+            label_x, label_y, x_direction = dense_label_positions[i]
+            text = ax.text(
+                label_x,
+                label_y,
+                _truncate_label(label, max_chars=max_label_chars, suffix=suffix),
+                fontsize=fontsize,
+                ha="left" if x_direction > 0 else "right",
+                va="center",
+                color=label_color,
+                linespacing=1,
+                zorder=4,
+                clip_on=True,
+                bbox=bbox_props,
+            )
+            texts.append(text)
+            ax.plot(
+                [x, label_x],
+                [y, label_y],
+                color=label_color,
+                linewidth=connector_linewidth,
+                zorder=3,
+            )
+            continue
+
+        near_left = x <= x_min + x_range * 0.18
+        near_right = x >= x_max - x_range * 0.18
+        if near_left:
+            x_direction = 1
+        elif near_right:
+            x_direction = -1
+        else:
+            x_direction = 1 if i % 2 == 0 else -1
+
+        if y >= y_max - y_range * 0.18:
+            y_direction = -1
+        elif y <= y_min + y_range * 0.18:
+            y_direction = 1
+        else:
+            y_direction = 1 if (i // 2) % 2 == 0 else -1
+
+        x_multiplier = 1.0 + (i % 5) * 0.8
+        y_multiplier = 1.0 + ((i // 5) % 3) * 0.6
+        label_x = x + x_direction * x_step * x_multiplier
+        label_y = y + y_direction * y_step * y_multiplier
+        label_x = min(max(label_x, x_min + x_pad), x_max - x_pad)
+        label_y = min(max(label_y, y_min + y_pad), y_max - y_pad)
+
+        text = ax.text(
+            label_x,
+            label_y,
+            _truncate_label(label, max_chars=max_label_chars, suffix=suffix),
+            fontsize=fontsize,
+            ha="left" if x_direction > 0 else "right",
+            va="bottom" if y_direction > 0 else "top",
+            color=label_color,
+            linespacing=1,
+            zorder=4,
+            clip_on=True,
+            bbox=bbox_props,
+        )
+        texts.append(text)
+        free_texts.append(text)
+        free_point_x.append(x)
+        free_point_y.append(y)
+
+    if not texts:
+        return []
+
+    if free_texts:
+        ax.figure.canvas.draw()
+        adjust_text(
+            free_texts,
+            x=free_point_x,
+            y=free_point_y,
+            target_x=free_point_x,
+            target_y=free_point_y,
+            ax=ax,
+            force_text=(0.25, 0.5),
+            force_static=(0.15, 0.35),
+            force_pull=(0.01, 0.03),
+            force_explode=(0.35, 0.6),
+            expand=(1.05, 1.25),
+            ensure_inside_axes=True,
+            only_move={"text": "xy", "static": "xy", "explode": "xy", "pull": "xy"},
+            arrowprops=dict(
+                arrowstyle="-",
+                color=label_color,
+                lw=connector_linewidth,
+                shrinkA=0,
+                shrinkB=0,
+            ),
+            min_arrow_len=1,
+            iter_lim=200,
+        )
+
+    for text in texts:
+        x, y = text.get_position()
+        text.set_position(
+            (
+                min(max(x, x_min + x_pad), x_max - x_pad),
+                min(max(y, y_min + y_pad), y_max - y_pad),
+            )
+        )
+
+    return texts
+
 
 def plot_precision_recall_curve(line_width=2.0, hide_minor_ticks=True):
     pra = dload("pra")
@@ -324,11 +528,6 @@ def plot_per_module_scatter(
 
         bg_df  = df.drop(index=significant_indices)
         sig_df = df.loc[significant_indices]
-        sig_sizes = (
-            sig_df['n_used_genes']
-            if 'n_used_genes' in sig_df
-            else pd.Series(1, index=sig_df.index)
-        ) * 8
 
         # Create square figure
         fig, ax = plt.subplots(figsize=(6, 6))
@@ -371,62 +570,6 @@ def plot_per_module_scatter(
         # Modules significant in both datasets stay black to avoid ambiguous color mixing.
         scatter_significant(significant_in_both, "black", zorder=3)
 
-        if show_labels:
-            # Improved label positioning with adaptive spacing
-            coords = sorted(
-                [(sig_df.loc[idx, pair[0]], sig_df.loc[idx, pair[1]], idx) for idx in sig_df.index],
-                key=lambda c: (-c[1], -c[0])
-            )
-            
-            # Calculate proper parameters for normalized coordinate system (0-1 range)
-            max_y = 1.0  # Normalized plots use 0-1 range
-            scale_factor = 1.0  # Standard scaling for normalized plots
-            min_distance = 0.08  # Increased spacing for 0-1 range to avoid overlap
-
-            adjusted_coords = adjust_text_positions_improved(
-                coords, sig_sizes,
-                min_distance=min_distance,
-                max_y=max_y,
-                scale_factor=scale_factor,
-                y_threshold=0.8  # Points above this will have labels below
-            )
-
-            for x, adj_y, idx, direction in adjusted_coords:
-                y = df.loc[idx, pair[1]]
-
-                # Calculate connector line extension, but constrain within plot bounds
-                line_extension_factor = 1.5  # Reduced from 2.5 to keep labels in bounds
-                extended_adj_y = y + (adj_y - y) * line_extension_factor
-
-                # Clip to ensure connector stays within 0-1 range
-                extended_adj_y = max(0.02, min(extended_adj_y, 0.98))
-
-                # Draw connector line
-                ax.plot([x, x], [y, extended_adj_y],
-                       color=label_color, linewidth=0.6, zorder=3)
-
-                # Position text at the end of extended line with small offset
-                text_y_offset = 0.01 if direction == "up" else -0.01
-                final_text_y = extended_adj_y + text_y_offset
-
-                # Final clip to ensure text stays within 0-1 range
-                final_text_y = max(0.02, min(final_text_y, 0.98))
-
-                bbox_props = dict(facecolor="white", edgecolor="none", pad=1) if show_text_background else None
-
-                ax.text(
-                    x, final_text_y,
-                    df.loc[idx, 'Name'][:10] + '.' if len(df.loc[idx, 'Name']) > 10 else df.loc[idx, 'Name'],
-                    fontsize=4,
-                    ha='left',
-                    va='bottom' if direction == "up" else 'top',
-                    color=label_color,
-                    linespacing=1,
-                    zorder=4,
-                    clip_on=True,  # Enable clipping to axes bounds
-                    bbox=bbox_props
-                )
-
         # Diagonal & axes cosmetics
         ax.plot([0, 1], [0, 1], linestyle='-', color='lightgray', linewidth=0.5, zorder=1)
         
@@ -439,6 +582,22 @@ def plot_per_module_scatter(
         ticks = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
         ax.set_xticks(ticks)
         ax.set_yticks(ticks)
+
+        if show_labels:
+            label_points = [
+                (sig_df.loc[idx, pair[0]], sig_df.loc[idx, pair[1]], df.loc[idx, "Name"])
+                for idx in sig_df.index
+            ]
+            _place_scatter_labels(
+                ax,
+                label_points,
+                label_color=label_color,
+                show_text_background=show_text_background,
+                fontsize=4,
+                max_label_chars=10,
+                suffix=".",
+                connector_linewidth=0.2,
+            )
         
         ax.set_xlabel(f"{pair[0]} AUPRC")
         ax.set_ylabel(f"{pair[1]} AUPRC")
@@ -993,20 +1152,6 @@ def plot_per_module_scatter_by_size(
         plot_margin = max_y * 0.2 if show_labels else max_y * 0.05
         effective_max_y = max_y + plot_margin
 
-        if show_labels:
-            # Enhanced anti-overlap labeling system
-            coords = [(row.auc_score, row.n_used_genes, idx) for idx, row in top_labels.iterrows()]
-
-            # Cluster nearby points
-            clusters = cluster_nearby_points(coords, cluster_threshold=0.15)
-
-            # Position labels for each cluster
-            for i, cluster in enumerate(clusters):
-                position_cluster_labels(
-                    cluster, i, max_y, effective_max_y,
-                    label_color, ax, top_labels, show_text_background
-                )
-
         # Set y-axis to show integer values only
         from matplotlib.ticker import MaxNLocator
         ax.yaxis.set_major_locator(MaxNLocator(integer=True))
@@ -1021,6 +1166,22 @@ def plot_per_module_scatter_by_size(
         # Set explicit x-axis ticks at 0.0, 0.2, 0.4, 0.6, 0.8, 1.0
         x_ticks = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
         ax.set_xticks(x_ticks)
+
+        if show_labels:
+            label_points = [
+                (row.auc_score, row.n_used_genes, row.Name)
+                for _, row in top_labels.iterrows()
+            ]
+            _place_scatter_labels(
+                ax,
+                label_points,
+                label_color=label_color,
+                show_text_background=show_text_background,
+                fontsize=4,
+                max_label_chars=10,
+                suffix=".",
+                connector_linewidth=0.2,
+            )
         
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -1288,580 +1449,167 @@ def plot_auc_scores():
     return pra_dict
 
 
-def plot_mpr_module_auc_scores(variant: str = "unfiltered", save=None, outname=None):
-    """Plot AUC values for the mPR modules curve (Fig 1F-style).
+DEFAULT_COLORS = [
+    "#4E79A7",
+    "#E15759",
+    "#76B7B2",
+    "#F28E2B",
+    "#59A14F",
+    "#EDC948",
+    "#B07AA1",
+    "#FF9DA7",
+    "#9C755F",
+    "#BAB0AC",
+]
 
-    Requires `mpr_prepare()` to have been run for each dataset.
+FILTER_VARIANTS = (
+    "all_complexes",
+    "without_mt_ribo_etci",
+    "without_small_high_auprc",
+)
 
-    Parameters
-    ----------
-    variant : str
-        One of: "unfiltered", "without_mt_ribo_etci",
-        "without_small_high_auprc".
-    save : bool, optional
-        Whether to save the figure. If None, uses config["plotting"]["save_plot"].
-    outname : str, optional
-        Output filename. If None, auto-generated.
+FILTER_VARIANT_STYLES = {
+    "all_complexes": {"linestyle": "-", "label": "All complexes"},
+    "without_mt_ribo_etci": {
+        "linestyle": "--",
+        "label": "Without mtRibo / ETC I",
+    },
+    "without_small_high_auprc": {
+        "linestyle": ":",
+        "label": "Without small high-AUPRC complexes",
+    },
+}
 
-    Returns
-    -------
-    pd.Series
-        AUC values indexed by dataset name (sorted descending).
-    """
-    config = dload("config")
-    plot_config = config["plotting"]
-    mpr_auc_dict = dload("mpr_modules_auc")
-    input_colors = dload("input", "colors")
 
-    if input_colors:
-        input_colors = {_sanitize(k): v for k, v in input_colors.items()}
-
-    if not isinstance(mpr_auc_dict, dict) or not mpr_auc_dict:
-        log.warning(
-            "No mPR modules AUC data found. Run mpr_prepare() first (it stores 'mpr_modules_auc')."
+def _plot_dataset_names(category, dataset_names, prepare_function):
+    stored = dload(category)
+    available = stored if isinstance(stored, dict) else {}
+    names = list(available) if dataset_names is None else list(dataset_names)
+    missing = [name for name in names if name not in available]
+    if not names or missing:
+        detail = f" Missing datasets: {missing}." if missing else ""
+        raise RuntimeError(
+            f"No complete '{category}' results are available.{detail} "
+            f"Run {prepare_function}(name) for each dataset first."
         )
-        return pd.Series(dtype=float)
+    return names, {name: available[name] for name in names}
 
-    variant_key = _normalize_mpr_variant(variant)
 
-    # Build Series: dataset -> auc
-    auc_by_dataset = {}
-    for dataset, per_filter in mpr_auc_dict.items():
-        if not isinstance(per_filter, dict):
-            continue
-        val = per_filter.get(variant_key)
-        if val is None:
-            continue
-        try:
-            auc_by_dataset[dataset] = float(val)
-        except (TypeError, ValueError):
-            continue
-
-    if not auc_by_dataset:
-        log.warning(
-            f"No mPR module AUC values found for variant '{variant}'. "
-            f"Available variants: {list(PUBLIC_MPR_VARIANTS.keys())}"
-        )
-        return pd.Series(dtype=float)
-
-    s = pd.Series(auc_by_dataset).sort_values(ascending=False)
-    datasets = list(s.index)
-    auc_scores = list(s.values)
-
-    fig, ax = plt.subplots()
-
-    # Color logic (match other bar plots)
+def _plot_dataset_colors(dataset_names, colors, config, input_colors):
+    if colors is not None:
+        return list(colors)
+    input_colors = (
+        {_sanitize(key): value for key, value in input_colors.items()}
+        if input_colors
+        else {}
+    )
     cmap_name = config.get("color_map", "tab10")
     try:
-        cmap = get_cmap(cmap_name)
+        cmap = plt.get_cmap(cmap_name)
     except ValueError:
-        cmap = get_cmap("tab10")
+        cmap = plt.get_cmap("tab10")
+    count = len(dataset_names)
+    defaults = [
+        cmap(i) if count <= 10 and cmap_name == "tab10"
+        else cmap(float(i) / max(count - 1, 1))
+        for i in range(count)
+    ]
+    return [
+        input_colors.get(_sanitize(name), defaults[i])
+        for i, name in enumerate(dataset_names)
+    ]
 
-    num_datasets = len(datasets)
-    if num_datasets <= 10 and cmap_name == "tab10":
-        default_colors = [cmap(i) for i in range(num_datasets)]
-    else:
-        default_colors = [cmap(float(i) / max(num_datasets - 1, 1)) for i in range(num_datasets)]
 
-    final_colors = []
-    for i, dataset in enumerate(datasets):
-        color = input_colors.get(dataset) if input_colors else None
-        if color is None:
-            color = default_colors[i]
-        final_colors.append(color)
+def _module_axis_scale(max_coverage):
+    import math
 
-    ax.bar(datasets, auc_scores, color=final_colors, edgecolor="black")
+    if max_coverage <= 200:
+        return 200, [1, 2, 20, 200], ["0", "2", "20", "200"]
+    x_max = 10 ** math.ceil(math.log10(max_coverage + 1))
+    ticks = [1, 2]
+    value = 10
+    while value <= x_max:
+        ticks.append(value)
+        value *= 10
+    return x_max, ticks, ["0"] + [str(tick) for tick in ticks[1:]]
 
-    ymax = max([v for v in auc_scores if np.isfinite(v)], default=0.0)
+
+def _coverage_max(values):
+    array = np.asarray(values, dtype=float)
+    return float(np.nanmax(array)) if array.size else 0.0
+
+
+def _configure_module_axis(ax, max_coverage):
+    x_max, ticks, labels = _module_axis_scale(max_coverage)
+    ax.set_xscale("log")
+    ax.set_xlim(1, x_max)
+    ax.set_xlabel("# modules")
+    ax.set_ylabel("Precision")
+    ax.set_ylim(0.0, 1.05)
+    ax.set_xticks(ticks)
+    ax.set_xticklabels(labels)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    return x_max
+
+
+def _save_mpr_figure(fig, config, outname, default_stem):
+    output_type = config["plotting"].get("output_type", "pdf")
+    filename = outname or f"{default_stem}.{output_type}"
+    path = Path(filename)
+    if len(path.parts) == 1:
+        path = Path(config["output_folder"]) / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, bbox_inches="tight", format=output_type)
+
+
+def plot_mpr_module_auc_scores(save=None, outname=None):
+    """Plot the unfiltered mPR AUC score for each prepared dataset."""
+    config = dload("config")
+    plot_config = config["plotting"]
+    stored = dload("mpr_modules_auc")
+    if not isinstance(stored, dict) or not stored:
+        raise RuntimeError(
+            "No mPR AUC results found. Run mpr_prepare(name) for each dataset first."
+        )
+    values = {
+        name: float(value)
+        for name, value in stored.items()
+        if np.isscalar(value)
+    }
+    scores = pd.Series(values, dtype=float).sort_values(ascending=False)
+    if scores.empty:
+        raise RuntimeError(
+            "Stored mPR AUC results use an unsupported legacy format. "
+            "Run mpr_prepare(name) again for each dataset."
+        )
+
+    colors = _plot_dataset_colors(
+        list(scores.index),
+        None,
+        config,
+        dload("input", "colors"),
+    )
+    fig, ax = plt.subplots()
+    ax.bar(scores.index, scores.values, color=colors, edgecolor="black")
+    ymax = max([value for value in scores.values if np.isfinite(value)], default=0.0)
     ax.set_ylim(0, ymax + 0.01)
     ax.set_ylabel("mPR modules AUC")
-    plt.xticks(rotation=45, ha="right")
-
-    # Styling consistent with other plots
-    ax.grid(visible=False, which="both", axis="both")
-    ax.set_axisbelow(False)
+    ax.tick_params(axis="x", labelrotation=45)
+    for label in ax.get_xticklabels():
+        label.set_ha("right")
+    ax.grid(False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
     should_save = plot_config.get("save_plot", False) if save is None else bool(save)
     if should_save:
-        output_type = plot_config.get("output_type", "pdf")
-        output_folder = Path(config["output_folder"])
-        output_folder.mkdir(parents=True, exist_ok=True)
-        if outname is None:
-            outname = f"mpr_modules_auc_{variant_key}.{output_type}"
-        output_path = Path(outname)
-        if len(output_path.parts) == 1:
-            output_path = output_folder / outname
-        plt.savefig(output_path, bbox_inches="tight", format=output_type)
-
+        _save_mpr_figure(fig, config, outname, "mpr_modules_auc")
     if plot_config.get("show_plot", True):
         plt.show()
-
     plt.close(fig)
-    return s
+    return scores
 
-
-def plot_mpr_modules_auc_scores(filter_key: str = "all"):
-    """Backward-compatible wrapper for plot_mpr_module_auc_scores()."""
-    return plot_mpr_module_auc_scores(
-        variant=_legacy_filter_to_variant(filter_key, default="unfiltered")
-    )
-
-# -----------------------------------------------------------------------------
-# mPR plots (Fig. 1E and Fig. 1F)
-# -----------------------------------------------------------------------------
-
-def plot_mpr_modules(name, ax=None, save=True, outname=None):
-    """
-    Fig. 1F-style module-level PR:
-      x-axis: number of covered modules (log)
-      y-axis: precision cutoff
-      x tick labels: 0, 2, 20, 200
-    """
-    mpr = dload("mpr", name)
-    if mpr is None:
-        raise RuntimeError(
-            f"plot_mpr_modules(): mPR data for dataset '{name}' not found. "
-            "Run `mpr_prepare` first."
-        )
-
-    precision_cutoffs = np.asarray(mpr["precision_cutoffs"], dtype=float)
-    coverage = mpr["coverage_curves"]
-
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(4, 4))
-    else:
-        fig = ax.figure
-
-    labels = [
-        ("all", "all data"),
-        ("no_mtRibo_ETCI", "no mtRibo, ETC I"),
-        ("no_small_highAUPRC", "no small, high AUPRC"),
-    ]
-    styles = {
-        "all": {"linewidth": 1.8},
-        "no_mtRibo_ETCI": {"linewidth": 1.8, "linestyle": "--"},
-        "no_small_highAUPRC": {"linewidth": 1.8, "linestyle": ":"},
-    }
-
-    for key, pretty in labels:
-        if key not in coverage:
-            continue
-        cov = np.asarray(coverage[key], dtype=float)
-
-        # keep only positive coverage up to 200 modules
-        mask = (cov > 0) & (cov <= 200)
-        if not mask.any():
-            continue
-
-        cov_plot = cov[mask]
-        prec_plot = precision_cutoffs[mask]
-
-        ax.plot(cov_plot, prec_plot, label=pretty, **styles.get(key, {}))
-
-    # log x-axis, show up to 200 modules
-    ax.set_xscale("log")
-    ax.set_xlim(1, 200)  # 1 on log scale will be labelled as "0" below
-
-    ax.set_xlabel("Number of covered modules")
-    ax.set_ylabel("Precision cutoff")
-    ax.set_ylim(0.0, 1.05)
-
-    # ticks at positions 1, 2, 20, 200 with labels 0, 2, 20, 200
-    tick_positions = [1, 2, 20, 200]
-    tick_labels = ["0", "2", "20", "200"]
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels(tick_labels)
-
-    ax.legend(frameon=False)
-    ax.set_title(f"[{name}] 19Q2 – mPR (#modules vs precision)")
-
-    if save:
-        if outname is None:
-            outname = f"mpr_modules_{name}.pdf"
-        fig.tight_layout()
-        fig.savefig(outname)
-
-    return ax
-
-def plot_mpr_tp(name, ax=None, save=True, outname=None):
-    """
-    Plot Fig. 1E-style TP vs precision curves for a dataset.
-
-    Uses the object created by `mpr_prepare(name)` and stored with key 'mpr'.
-    """
-    mpr = dload("mpr", name)
-    if mpr is None:
-        raise RuntimeError(
-            f"plot_mpr_tp(): mPR data for dataset '{name}' not found. "
-            "Run `mpr_prepare` first."
-        )
-
-    tp_curves = mpr["tp_curves"]
-
-    if ax is None:
-        fig, ax = plt.subplots(figsize=(4, 4))
-    else:
-        fig = ax.figure
-
-    labels = [
-        ("all", "all data"),
-        ("no_mtRibo_ETCI", "no mtRibo, ETC I"),
-        ("no_small_highAUPRC", "no small, high AUPRC"),
-    ]
-    styles = {
-        "all": {"linewidth": 1.8},
-        "no_mtRibo_ETCI": {"linewidth": 1.8, "linestyle": "--"},
-        "no_small_highAUPRC": {"linewidth": 1.8, "linestyle": ":"},
-    }
-
-    xmax = 0.0
-    for key, pretty in labels:
-        if key not in tp_curves:
-            continue
-        data = tp_curves[key]
-        tp = np.asarray(data["tp"], dtype=float)
-        prec = np.asarray(data["precision"], dtype=float)
-        mask = np.isfinite(tp) & (tp > 0) & np.isfinite(prec) & (prec > 0)
-        if not mask.any():
-            continue
-        tp_plot = tp[mask]
-        prec_plot = prec[mask]
-        xmax = max(xmax, float(tp_plot.max()))
-        ax.plot(tp_plot, prec_plot, label=pretty, **styles.get(key, {}))
-
-    ax.set_xlabel("Number of true positives")
-    ax.set_ylabel("Precision")
-    ax.set_ylim(0.0, 1.05)
-
-    if xmax > 0:
-        ax.set_xscale("log")
-
-        # If we have enough TPs, start at 10; otherwise fall back.
-        if xmax > 10:
-            ax.set_xlim(10, xmax * 1.05)
-            logmin = 1  # 10^1 = 10
-        else:
-            ax.set_xlim(1, xmax * 1.05)
-            logmin = 0  # 10^0 = 1
-
-        logmax = int(np.ceil(np.log10(xmax)))
-        logmax = max(logmax, logmin)
-        xticks = [10 ** k for k in range(logmin, logmax + 1)]
-        ax.set_xticks(xticks)
-
-    ax.legend(frameon=False)
-    ax.set_title(f"{name} – PR (TP vs precision)")
-
-    if save:
-        if outname is None:
-            outname = f"mpr_tp_{name}.pdf"
-        fig.tight_layout()
-        fig.savefig(outname)
-
-    return ax
-
-# Default color palette (colorblind-friendly)
-DEFAULT_COLORS = [
-    "#4E79A7",  # blue
-    "#E15759",  # red
-    "#76B7B2",  # teal
-    "#F28E2B",  # orange
-    "#59A14F",  # green
-    "#EDC948",  # yellow
-    "#B07AA1",  # purple
-    "#FF9DA7",  # pink
-    "#9C755F",  # brown
-    "#BAB0AC",  # gray
-]
-
-# Public mPR variant names map to the internal keys stored by mpr_prepare().
-PUBLIC_MPR_VARIANTS = {
-    "unfiltered": "all",
-    "without_mt_ribo_etci": "no_mtRibo_ETCI",
-    "without_small_high_auprc": "no_small_highAUPRC",
-}
-INTERNAL_MPR_VARIANTS = {v: k for k, v in PUBLIC_MPR_VARIANTS.items()}
-
-# mPR variant line styles keyed by internal storage names.
-MPR_VARIANT_STYLES = {
-    "all": {"linestyle": "-", "label": "all data"},
-    "no_mtRibo_ETCI": {"linestyle": "--", "label": "no mtRibo, ETC I"},
-    "no_small_highAUPRC": {"linestyle": "dotted", "label": "no small, high AUPRC"},
-}
-
-# Compatibility alias for users who imported this internal constant.
-FILTER_STYLES = MPR_VARIANT_STYLES
-
-
-def _normalize_mpr_variant(variant):
-    """Return the internal mPR variant key for one public variant name."""
-    if variant in PUBLIC_MPR_VARIANTS:
-        return PUBLIC_MPR_VARIANTS[variant]
-    if variant in MPR_VARIANT_STYLES:
-        if variant == "all":
-            return PUBLIC_MPR_VARIANTS["unfiltered"]
-        return variant
-    raise ValueError(
-        "Unknown mPR variant "
-        f"{variant!r}. Use one of {list(PUBLIC_MPR_VARIANTS.keys())}."
-    )
-
-
-def _normalize_mpr_variants(variants):
-    """Normalize public mPR variant names to internal storage keys."""
-    if variants is None:
-        raw_variants = ("all",)
-    elif isinstance(variants, str):
-        raw_variants = (variants,)
-    else:
-        try:
-            raw_variants = tuple(variants)
-        except TypeError:
-            raw_variants = (variants,)
-
-    out = []
-    for variant in raw_variants:
-        if variant == "all":
-            out.extend(PUBLIC_MPR_VARIANTS.values())
-        else:
-            out.append(_normalize_mpr_variant(variant))
-
-    # Preserve user order while removing duplicates.
-    return tuple(dict.fromkeys(out))
-
-
-def _legacy_filter_to_variant(filter_key, default=None):
-    """Map old filter-key names to public variant names."""
-    if filter_key is None:
-        return default if default is not None else "all"
-    mapping = {
-        "all": "unfiltered",
-        "no_mtRibo_ETCI": "without_mt_ribo_etci",
-        "no_small_highAUPRC": "without_small_high_auprc",
-    }
-    return mapping.get(filter_key, filter_key)
-
-
-def _legacy_filters_to_variants(show_filters):
-    """Map old show_filters values to public variant names."""
-    if show_filters is None:
-        return "all"
-    if isinstance(show_filters, str):
-        return _legacy_filter_to_variant(show_filters)
-    try:
-        return tuple(_legacy_filter_to_variant(item) for item in show_filters)
-    except TypeError:
-        return (_legacy_filter_to_variant(show_filters),)
-
-
-def _normalize_show_filters(show_filters):
-    """Backward-compatible normalizer for old internal filter keys."""
-    return _normalize_mpr_variants(_legacy_filters_to_variants(show_filters))
-
-def plot_mpr_true_positive_curve(
-    dataset_names=None,
-    colors=None,
-    ax=None,
-    save=True,
-    outname=None,
-    linewidth=1.8,
-    variants="unfiltered",
-):
-    """
-    Plot mPR true-positive vs precision curves for multiple datasets.
-    
-    Can auto-detect datasets or use provided dataset names.
-    Each dataset gets one color, each filter type gets one line style.
-    Two legends: one for datasets (colors), one for filters (line styles).
-    
-    Parameters
-    ----------
-    dataset_names : list of str, optional
-        Names of datasets to plot. If None, auto-detects available datasets.
-    colors : list of str, optional
-        Colors for each dataset. If None, uses default palette.
-    ax : matplotlib.axes.Axes, optional
-        Axes to plot on. If None, creates new figure.
-    save : bool
-        Whether to save the figure
-    outname : str, optional
-        Output filename. If None, auto-generated.
-    linewidth : float
-        Line width for all curves
-    variants : str or iterable of str
-        Which mPR variants to show. Use "unfiltered",
-        "without_mt_ribo_etci", "without_small_high_auprc", or "all".
-    
-    Returns
-    -------
-    ax : matplotlib.axes.Axes
-    """
-    config = dload("config")
-    plot_config = config["plotting"]
-    input_colors = dload("input", "colors")
-
-    variant_keys = _normalize_mpr_variants(variants)
-    
-    # Sanitize color keys
-    if input_colors:
-        input_colors = {_sanitize(k): v for k, v in input_colors.items()}
-
-    # Auto-detect datasets if none provided
-    if dataset_names is None:
-        # Get all available MPR datasets from the storage
-        mpr_data_dict = dload("mpr")
-        if isinstance(mpr_data_dict, dict) and mpr_data_dict:
-            dataset_names = list(mpr_data_dict.keys())
-        else:
-            dataset_names = []
-        
-        if not dataset_names:
-            log.warning("No mPR datasets found. Make sure to run mpr_prepare() first.")
-            return None
-    
-    # Determine colors
-    if colors is None:
-        cmap_name = config.get("color_map", "tab10")
-        try:
-            cmap = get_cmap(cmap_name)
-        except ValueError:
-            cmap = get_cmap("tab10")
-
-        num_datasets = len(dataset_names)
-        if num_datasets <= 10 and cmap_name == "tab10":
-            default_colors = [cmap(i) for i in range(num_datasets)]
-        else:
-            default_colors = [cmap(float(i) / max(num_datasets - 1, 1)) for i in range(num_datasets)]
-
-        # Assign colors strictly matching the sorted dataset order
-        final_colors = []
-        for i, dataset in enumerate(dataset_names):
-            color = input_colors.get(dataset) if input_colors else None
-            # fallback to sanitized lookup just in case dataset_name is already sanitized but key isn't (or vice versa though we sanitized keys above)
-            if color is None:
-                 color = default_colors[i]
-            final_colors.append(color)
-        colors = final_colors
-    
-    if ax is None:
-        # Increase width slightly
-        fig, ax = plt.subplots(figsize=(6, 4))
-        # Reserve space for legend on right
-        plt.subplots_adjust(right=0.7)
-    else:
-        fig = ax.figure
-    
-    xmax = 0.0
-    
-    # Plot each dataset
-    for i, name in enumerate(dataset_names):
-        mpr = dload("mpr", name)
-        if mpr is None:
-            log.warning(f"mPR data for '{name}' not found, skipping.")
-            continue
-        
-        # Check if mPR data has expected structure
-        if "tp_curves" not in mpr:
-            log.warning(f"mPR data for '{name}' missing 'tp_curves', skipping.")
-            continue
-            
-        tp_curves = mpr["tp_curves"]
-        color = colors[i % len(colors)]
-        
-        for variant_key in variant_keys:
-            if variant_key not in tp_curves:
-                continue
-            
-            data = tp_curves[variant_key]
-            if not isinstance(data, dict) or "tp" not in data or "precision" not in data:
-                log.warning(f"Invalid tp_curves data structure for '{name}' variant '{variant_key}', skipping.")
-                continue
-                
-            tp = np.asarray(data["tp"], dtype=float)
-            prec = np.asarray(data["precision"], dtype=float)
-            
-            mask = np.isfinite(tp) & (tp > 0) & np.isfinite(prec) & (prec > 0)
-            if not mask.any():
-                continue
-            
-            tp_plot = tp[mask]
-            prec_plot = prec[mask]
-            xmax = max(xmax, float(tp_plot.max()))
-            
-            style = MPR_VARIANT_STYLES.get(variant_key, {})
-            ax.plot(
-                tp_plot, 
-                prec_plot, 
-                color=color,
-                linestyle=style.get("linestyle", "-"),
-                linewidth=linewidth,
-            )
-    
-    # Configure axes
-    ax.set_xlabel("Number of true positives")
-    ax.set_ylabel("Precision")
-    ax.set_ylim(0.0, 1.05)
-    
-    if xmax > 0:
-        ax.set_xscale("log")
-        if xmax > 10:
-            ax.set_xlim(10, xmax * 1.05)
-            logmin = 1
-        else:
-            ax.set_xlim(1, xmax * 1.05)
-            logmin = 0
-        
-        logmax = int(np.ceil(np.log10(xmax)))
-        logmax = max(logmax, logmin)
-        xticks = [10 ** k for k in range(logmin, logmax + 1)]
-        ax.set_xticks(xticks)
-    
-    # Remove top and right spines
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    
-    # Create vertically stacked legends
-    _add_vertical_legend(ax, dataset_names, colors, variant_keys, linewidth)
-    
-    # Save
-    if save:
-        output_type = plot_config.get("output_type", "pdf")
-        if outname is None:
-            outname = f"mpr_tp_multi.{output_type}"
-        
-        # Check if outname is just a filename or a full path
-        outpath = Path(outname)
-        if len(outpath.parts) == 1:
-             # Just a filename, prepend configured output folder
-             outpath = Path(config["output_folder"]) / outname
-
-        fig.tight_layout()
-        fig.savefig(outpath, bbox_inches="tight", format=output_type)
-    
-    return ax
-
-
-def plot_mpr_tp_multi(
-    dataset_names=None,
-    colors=None,
-    ax=None,
-    save=True,
-    outname=None,
-    linewidth=1.8,
-    show_filters=("all", "no_mtRibo_ETCI", "no_small_highAUPRC"),
-):
-    """Backward-compatible wrapper for plot_mpr_true_positive_curve()."""
-    return plot_mpr_true_positive_curve(
-        dataset_names=dataset_names,
-        colors=colors,
-        ax=ax,
-        save=save,
-        outname=outname,
-        linewidth=linewidth,
-        variants=_legacy_filters_to_variants(show_filters),
-    )
 
 def plot_mpr_module_coverage_curve(
     dataset_names=None,
@@ -1870,275 +1618,301 @@ def plot_mpr_module_coverage_curve(
     save=True,
     outname=None,
     linewidth=1.8,
-    variants="unfiltered",
     show_markers="auto",
     marker_size=20,
 ):
-    """
-    Plot mPR module-coverage vs precision curves for multiple datasets.
-    
-    Can auto-detect datasets or use provided dataset names.
-    Each dataset gets one color, each filter type gets one line style.
-    Two legends: one for datasets (colors), one for filters (line styles).
-    
-    Parameters
-    ----------
-    dataset_names : list of str, optional
-        Names of datasets to plot. If None, auto-detects available datasets.
-    colors : list of str, optional
-        Colors for each dataset. If None, uses default palette.
-    ax : matplotlib.axes.Axes, optional
-        Axes to plot on. If None, creates new figure.
-    save : bool
-        Whether to save the figure
-    outname : str, optional
-        Output filename. If None, auto-generated.
-    linewidth : float
-        Line width for all curves
-    variants : str or iterable of str
-        Which mPR variants to show. Use "unfiltered",
-        "without_mt_ribo_etci", "without_small_high_auprc", or "all".
-    show_markers : bool or "auto"
-        If True, draw markers on curves to make short curves visible.
-        If "auto" (default), markers are drawn only for curves with <= 10 points.
-    marker_size : int
-        Scatter marker size (points^2) when markers are shown.
-    
-    Returns
-    -------
-    ax : matplotlib.axes.Axes
-    """
+    """Plot the unfiltered module-coverage mPR curve across datasets."""
     config = dload("config")
-    plot_config = config["plotting"]
-    input_colors = dload("input", "colors")
-
-    variant_keys = _normalize_mpr_variants(variants)
-    
-    # Sanitize color keys
-    if input_colors:
-        input_colors = {_sanitize(k): v for k, v in input_colors.items()}
-
-    # Auto-detect datasets if none provided
-    if dataset_names is None:
-        # Get all available MPR datasets from the storage
-        mpr_data_dict = dload("mpr")
-        if isinstance(mpr_data_dict, dict) and mpr_data_dict:
-            dataset_names = list(mpr_data_dict.keys())
-        else:
-            dataset_names = []
-        
-        if not dataset_names:
-            log.warning("No mPR datasets found. Make sure to run mpr_prepare() first.")
-            return None
-    
-    # Determine colors
-    if colors is None:
-        cmap_name = config.get("color_map", "tab10")
-        try:
-            cmap = get_cmap(cmap_name)
-        except ValueError:
-            cmap = get_cmap("tab10")
-
-        num_datasets = len(dataset_names)
-        if num_datasets <= 10 and cmap_name == "tab10":
-            default_colors = [cmap(i) for i in range(num_datasets)]
-        else:
-            default_colors = [cmap(float(i) / max(num_datasets - 1, 1)) for i in range(num_datasets)]
-
-        # Assign colors strictly matching the sorted dataset order
-        final_colors = []
-        for i, dataset in enumerate(dataset_names):
-            color = input_colors.get(dataset) if input_colors else None
-            # fallback to sanitized lookup just in case dataset_name is already sanitized but key isn't (or vice versa though we sanitized keys above)
-            if color is None:
-                 color = default_colors[i]
-            final_colors.append(color)
-        colors = final_colors
-    
-    if ax is None:
-        # Increase width slightly
+    dataset_names, stored = _plot_dataset_names(
+        "mpr", dataset_names, "mpr_prepare"
+    )
+    colors = _plot_dataset_colors(
+        dataset_names,
+        colors,
+        config,
+        dload("input", "colors"),
+    )
+    owns_figure = ax is None
+    if owns_figure:
         fig, ax = plt.subplots(figsize=(6, 4))
-        # Reserve space for legend on right
-        plt.subplots_adjust(right=0.7)
+        fig.subplots_adjust(right=0.7)
     else:
         fig = ax.figure
-    
-    # First pass: determine max coverage across all datasets/filters for adaptive x-axis
-    max_cov_global = 0
-    _mpr_cache = {}
-    for i, name in enumerate(dataset_names):
-        mpr = dload("mpr", name)
-        _mpr_cache[name] = mpr
-        if mpr is not None:
-            for variant_key in variant_keys:
-                arr = mpr["coverage_curves"].get(variant_key)
-                if arr is not None:
-                    max_cov_global = max(max_cov_global, float(np.asarray(arr).max()))
 
-    # Build adaptive x-axis limits and ticks
-    import math
-    if max_cov_global <= 200:
-        # Original fixed range — keeps CORUM plots identical to before
-        x_max_plot = 200
-        tick_positions = [1, 2, 20, 200]
-        tick_labels = ["0", "2", "20", "200"]
-    else:
-        # Round up to the next power of 10 so the max bar has breathing room
-        x_max_plot = 10 ** math.ceil(math.log10(max_cov_global + 1))
-        tick_positions = [1, 2]
-        v = 10
-        while v <= x_max_plot:
-            tick_positions.append(v)
-            v *= 10
-        tick_labels = ["0"] + [str(t) for t in tick_positions[1:]]
-
-    # Plot each dataset
+    max_coverage = max(
+        (_coverage_max(data["coverage_curve"]) for data in stored.values()),
+        default=0.0,
+    )
+    x_max = _configure_module_axis(ax, max_coverage)
     for i, name in enumerate(dataset_names):
-        mpr = _mpr_cache[name]
-        if mpr is None:
-            log.warning(f"mPR data for '{name}' not found, skipping.")
+        data = stored[name]
+        cutoffs = np.asarray(data["precision_cutoffs"], dtype=float)
+        coverage = np.asarray(data["coverage_curve"], dtype=float)
+        mask = (coverage > 0) & (coverage <= x_max)
+        if not mask.any():
             continue
+        x_values = coverage[mask]
+        y_values = cutoffs[mask]
+        use_markers = x_values.size <= 10 if show_markers == "auto" else bool(show_markers)
+        if x_values.size == 1:
+            ax.scatter(
+                x_values,
+                y_values,
+                color=colors[i],
+                s=marker_size,
+                label=name,
+                zorder=3,
+            )
+        else:
+            ax.plot(
+                x_values,
+                y_values,
+                color=colors[i],
+                linewidth=linewidth,
+                marker="o" if use_markers else None,
+                markersize=3 if use_markers else None,
+                label=name,
+            )
 
-        precision_cutoffs = np.asarray(mpr["precision_cutoffs"], dtype=float)
-        coverage = mpr["coverage_curves"]
-        color = colors[i % len(colors)]
-
-        for variant_key in variant_keys:
-            if variant_key not in coverage:
-                continue
-
-            cov = np.asarray(coverage[variant_key], dtype=float)
-
-            # Keep only positive coverage within the visible x range
-            mask = (cov > 0) & (cov <= x_max_plot)
-            if not mask.any():
-                continue
-
-            cov_plot = cov[mask]
-            prec_plot = precision_cutoffs[mask]
-
-            style = MPR_VARIANT_STYLES.get(variant_key, {})
-
-            # Decide marker visibility
-            if show_markers == "auto":
-                use_markers = (cov_plot.size <= 10)
-            else:
-                use_markers = bool(show_markers)
-
-            if cov_plot.size == 1:
-                # A single point is effectively invisible as a line; draw a marker.
-                ax.scatter(cov_plot, prec_plot, color=color, s=marker_size, zorder=3)
-            else:
-                ax.plot(
-                    cov_plot,
-                    prec_plot,
-                    color=color,
-                    linestyle=style.get("linestyle", "-"),
-                    linewidth=linewidth,
-                    marker=("o" if use_markers else None),
-                    markersize=(3 if use_markers else None),
-                )
-
-    # Configure axes
-    ax.set_xscale("log")
-    ax.set_xlim(1, x_max_plot)
-    ax.set_xlabel("# modules")
-    ax.set_ylabel("Precision")
-    ax.set_ylim(0.0, 1.05)
-
-    # Adaptive x-ticks
-    ax.set_xticks(tick_positions)
-    ax.set_xticklabels(tick_labels)
-    
-    # Remove top and right spines
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    
-    # Create vertically stacked legends
-    _add_vertical_legend(ax, dataset_names, colors, variant_keys, linewidth)
-    
-    # Save
+    legend = ax.legend(
+        loc="upper left",
+        bbox_to_anchor=(1.05, 1.0),
+        frameon=False,
+        title="Dataset",
+        fontsize=7,
+        title_fontsize=8,
+    )
+    if owns_figure:
+        _fit_external_legends(ax, (legend,))
     if save:
-        output_type = plot_config.get("output_type", "pdf")
-        if outname is None:
-            outname = f"mpr_modules_multi.{output_type}"
-        
-        # Check if outname is just a filename or a full path
-        outpath = Path(outname)
-        if len(outpath.parts) == 1:
-             # Just a filename, prepend configured output folder
-             outpath = Path(config["output_folder"]) / outname
-
-        fig.tight_layout()
-        fig.savefig(outpath, bbox_inches="tight", format=output_type)
-    
+        _save_mpr_figure(fig, config, outname, "mpr_modules_multi")
     return ax
 
 
-def plot_mpr_modules_multi(
+def plot_mpr_filter(
     dataset_names=None,
     colors=None,
     ax=None,
     save=True,
     outname=None,
     linewidth=1.8,
-    show_filters=("all", "no_mtRibo_ETCI", "no_small_highAUPRC"),
     show_markers="auto",
     marker_size=20,
 ):
-    """Backward-compatible wrapper for plot_mpr_module_coverage_curve()."""
-    return plot_mpr_module_coverage_curve(
-        dataset_names=dataset_names,
-        colors=colors,
-        ax=ax,
-        save=save,
-        outname=outname,
-        linewidth=linewidth,
-        variants=_legacy_filters_to_variants(show_filters),
-        show_markers=show_markers,
-        marker_size=marker_size,
+    """Compare the three lazily computed complex-filter mPR variants."""
+    config = dload("config")
+    dataset_names, stored = _plot_dataset_names(
+        "mpr_filter", dataset_names, "mpr_filter"
     )
+    colors = _plot_dataset_colors(
+        dataset_names,
+        colors,
+        config,
+        dload("input", "colors"),
+    )
+    owns_figure = ax is None
+    if owns_figure:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        fig.subplots_adjust(right=0.7)
+    else:
+        fig = ax.figure
+
+    max_coverage = max(
+        (
+            _coverage_max(curve)
+            for data in stored.values()
+            for curve in data["coverage_curves"].values()
+        ),
+        default=0.0,
+    )
+    x_max = _configure_module_axis(ax, max_coverage)
+    auc_values = {}
+    for i, name in enumerate(dataset_names):
+        data = stored[name]
+        cutoffs = np.asarray(data["precision_cutoffs"], dtype=float)
+        auc_values[name] = data["modules_auc"]
+        for variant in FILTER_VARIANTS:
+            coverage = np.asarray(data["coverage_curves"][variant], dtype=float)
+            mask = (coverage > 0) & (coverage <= x_max)
+            if not mask.any():
+                continue
+            x_values = coverage[mask]
+            y_values = cutoffs[mask]
+            style = FILTER_VARIANT_STYLES[variant]
+            use_markers = x_values.size <= 10 if show_markers == "auto" else bool(show_markers)
+            if x_values.size == 1:
+                ax.scatter(x_values, y_values, color=colors[i], s=marker_size, zorder=3)
+            else:
+                ax.plot(
+                    x_values,
+                    y_values,
+                    color=colors[i],
+                    linestyle=style["linestyle"],
+                    linewidth=linewidth,
+                    marker="o" if use_markers else None,
+                    markersize=3 if use_markers else None,
+                )
+
+    _add_vertical_legend(
+        ax,
+        dataset_names,
+        colors,
+        FILTER_VARIANTS,
+        linewidth,
+        fit_figure=owns_figure,
+    )
+    if save:
+        _save_mpr_figure(fig, config, outname, "mpr_filter_comparison")
+    return ax, pd.DataFrame.from_dict(auc_values, orient="index")[list(FILTER_VARIANTS)]
+
+
+def plot_globalpr_filter(
+    dataset_names=None,
+    colors=None,
+    ax=None,
+    save=True,
+    outname=None,
+    linewidth=1.8,
+):
+    """Compare the three lazily computed complex-filter global PR variants."""
+    config = dload("config")
+    dataset_names, stored = _plot_dataset_names(
+        "globalpr_filter", dataset_names, "globalpr_filter"
+    )
+    colors = _plot_dataset_colors(
+        dataset_names,
+        colors,
+        config,
+        dload("input", "colors"),
+    )
+    owns_figure = ax is None
+    if owns_figure:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        fig.subplots_adjust(right=0.7)
+    else:
+        fig = ax.figure
+
+    xmax = 0.0
+    for i, name in enumerate(dataset_names):
+        for variant in FILTER_VARIANTS:
+            curve = stored[name]["curves"][variant]
+            tp = np.asarray(curve["tp"], dtype=float)
+            precision = np.asarray(curve["precision"], dtype=float)
+            mask = np.isfinite(tp) & (tp > 0) & np.isfinite(precision) & (precision > 0)
+            if not mask.any():
+                continue
+            xmax = max(xmax, float(tp[mask].max()))
+            ax.plot(
+                tp[mask],
+                precision[mask],
+                color=colors[i],
+                linestyle=FILTER_VARIANT_STYLES[variant]["linestyle"],
+                linewidth=linewidth,
+            )
+
+    ax.set_xlabel("Number of true positives")
+    ax.set_ylabel("Precision")
+    ax.set_ylim(0.0, 1.05)
+    if xmax > 0:
+        ax.set_xscale("log")
+        lower_power = 1 if xmax > 10 else 0
+        ax.set_xlim(10 ** lower_power, xmax * 1.05)
+        upper_power = max(int(np.ceil(np.log10(xmax))), lower_power)
+        ax.set_xticks([10 ** power for power in range(lower_power, upper_power + 1)])
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    _add_vertical_legend(
+        ax,
+        dataset_names,
+        colors,
+        FILTER_VARIANTS,
+        linewidth,
+        fit_figure=owns_figure,
+    )
+    if save:
+        _save_mpr_figure(fig, config, outname, "globalpr_filter_comparison")
+    return ax
 
 
 def plot_mpr_summary(
     dataset_names=None,
     colors=None,
-    variants="unfiltered",
     save=True,
     linewidth=1.8,
     show_markers="auto",
     marker_size=20,
-    auc_variant=None,
 ):
-    """Generate the standard mPR summary plots and return module AUC values."""
-    plot_mpr_true_positive_curve(
-        dataset_names=dataset_names,
-        colors=colors,
-        save=save,
-        linewidth=linewidth,
-        variants=variants,
-    )
+    """Plot unfiltered module-coverage mPR curves and their dataset AUCs."""
     plot_mpr_module_coverage_curve(
         dataset_names=dataset_names,
         colors=colors,
         save=save,
         linewidth=linewidth,
-        variants=variants,
         show_markers=show_markers,
         marker_size=marker_size,
     )
+    return plot_mpr_module_auc_scores(save=save)
 
-    if auc_variant is None:
-        variant_keys = _normalize_mpr_variants(variants)
-        auc_variant = INTERNAL_MPR_VARIANTS.get(variant_keys[0], "unfiltered")
 
-    return plot_mpr_module_auc_scores(variant=auc_variant, save=save)
+def _fit_external_legends(ax, legends, pad_inches=0.08):
+    """Grow a standalone figure until external legends are fully visible."""
+    fig = ax.figure
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    legend_boxes = [legend.get_window_extent(renderer) for legend in legends]
+    if not legend_boxes:
+        return
 
-def _add_vertical_legend(ax, dataset_names, colors, variant_keys, linewidth):
+    dpi = fig.dpi
+    pad_pixels = pad_inches * dpi
+    overflow_right = max(
+        0.0,
+        max(box.x1 for box in legend_boxes) + pad_pixels - fig.bbox.x1,
+    )
+    overflow_bottom = max(
+        0.0,
+        fig.bbox.y0 + pad_pixels - min(box.y0 for box in legend_boxes),
+    )
+    overflow_top = max(
+        0.0,
+        max(box.y1 for box in legend_boxes) + pad_pixels - fig.bbox.y1,
+    )
+    if not (overflow_right or overflow_bottom or overflow_top):
+        return
+
+    old_width, old_height = fig.get_size_inches()
+    axes_box = ax.get_position()
+    extra_right = overflow_right / dpi
+    extra_bottom = overflow_bottom / dpi
+    extra_top = overflow_top / dpi
+    new_width = old_width + extra_right
+    new_height = old_height + extra_bottom + extra_top
+
+    # Keep the plotting panel's physical size unchanged; only extend the canvas
+    # around it to accommodate the legends.
+    fig.set_size_inches(new_width, new_height, forward=True)
+    ax.set_position(
+        [
+            axes_box.x0 * old_width / new_width,
+            (axes_box.y0 * old_height + extra_bottom) / new_height,
+            axes_box.width * old_width / new_width,
+            axes_box.height * old_height / new_height,
+        ]
+    )
+    fig.canvas.draw_idle()
+
+
+def _add_vertical_legend(
+    ax,
+    dataset_names,
+    colors,
+    variant_keys,
+    linewidth,
+    fit_figure=False,
+):
     """
-    Add vertically stacked legends: Dataset on top, mPR variant below.
+    Add vertically stacked legends: dataset on top, complex filter below.
     """
-    variant_keys = _normalize_show_filters(variant_keys)
     # Legend 1: Datasets (colors) - solid lines
     dataset_handles = []
     for i, name in enumerate(dataset_names):
@@ -2150,7 +1924,7 @@ def _add_vertical_legend(ax, dataset_names, colors, variant_keys, linewidth):
     variant_handles = []
     variant_labels = []
     for variant_key in variant_keys:
-        style = MPR_VARIANT_STYLES.get(variant_key, {})
+        style = FILTER_VARIANT_STYLES.get(variant_key, {})
         handle = Line2D(
             [0], [0], 
             color="black", 
@@ -2174,63 +1948,27 @@ def _add_vertical_legend(ax, dataset_names, colors, variant_keys, linewidth):
     )
     ax.add_artist(legend1)
     
+    # Place the second legend from the first legend's actual rendered bottom,
+    # rather than estimating its height from the number of labels.
+    ax.figure.canvas.draw()
+    renderer = ax.figure.canvas.get_renderer()
+    legend1_bottom = legend1.get_window_extent(renderer).y0
+    legend1_bottom_axes = ax.transAxes.inverted().transform((0, legend1_bottom))[1]
+
     # Filter legend below the dataset legend, aligned properly without title
     legend2 = ax.legend(
         variant_handles,
         variant_labels,
         loc="upper left",
         frameon=False,
+        title="Complex filter",
+        title_fontsize=8,
         fontsize=7,
-        bbox_to_anchor=(1.05, 1.0 - len(dataset_names) * 0.06 - 0.1)
+        bbox_to_anchor=(1.05, legend1_bottom_axes - 0.03)
     )
 
-def _add_dual_legend(ax, dataset_names, colors, variant_keys, linewidth):
-    """
-    Add two legends: one for datasets (colors), one for mPR variants (line styles).
-    """
-    variant_keys = _normalize_show_filters(variant_keys)
-    # Legend 1: Datasets (colors) - solid lines
-    dataset_handles = []
-    for i, name in enumerate(dataset_names):
-        color = colors[i % len(colors)]
-        handle = Line2D([0], [0], color=color, linewidth=linewidth, linestyle="-")
-        dataset_handles.append(handle)
-    
-    # Legend 2: mPR variants (line styles) - black lines
-    variant_handles = []
-    variant_labels = []
-    for variant_key in variant_keys:
-        style = MPR_VARIANT_STYLES.get(variant_key, {})
-        handle = Line2D(
-            [0], [0], 
-            color="black", 
-            linewidth=linewidth, 
-            linestyle=style.get("linestyle", "-")
-        )
-        variant_handles.append(handle)
-        variant_labels.append(style.get("label", variant_key))
-    
-    # Position legends
-    # Dataset legend on upper right
-    legend1 = ax.legend(
-        dataset_handles, 
-        dataset_names, 
-        loc="upper right",
-        frameon=False,
-        title="Dataset",
-        fontsize=7,
-        title_fontsize=8,
-    )
-    ax.add_artist(legend1)
-    
-    # Filter legend on lower left or right depending on plot type
-    legend2 = ax.legend(
-        variant_handles,
-        variant_labels,
-        loc="lower left",
-        frameon=False,
-        title="Variant",
-        fontsize=7,
-        title_fontsize=8,
-    )
+    if fit_figure:
+        _fit_external_legends(ax, (legend1, legend2))
+
+    return legend1, legend2
 

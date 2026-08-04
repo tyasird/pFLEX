@@ -154,10 +154,15 @@ for name, dataset in data.items():
 
 `mpr_prepare(name)`:
 
-- prepares module-level precision-recall data
-- stores true-positive curves, coverage curves, filter metadata, and mPR AUC summaries
+- prepares the unfiltered module-coverage precision-recall data
+- stores one coverage curve and its mPR AUC score
 - must be run before the mPR plotting functions
-- accepts optional thresholds such as `size_th`, `auprc_th`, `tp_th`, and `percent_th` for the module-level filtering logic
+- accepts optional `tp_th` and `percent_th` coverage thresholds
+
+`mpr_filter(name)` and `globalpr_filter(name)` are optional sensitivity
+analyses. They lazily compute the predefined all-complexes,
+without-mtRibo/ETC-I, and without-small-high-AUPRC comparisons. They are not
+run by `mpr_prepare()`.
 
 ## Plotting and Export
 
@@ -188,11 +193,12 @@ Per-module plots:
 
 mPR preparation and plots:
 
-- `mpr_prepare(name, size_th=30, auprc_th=0.4, tp_th=1, percent_th=0.1, use_corrected=True)` prepares module-level PR data for one dataset. It filters terms for module-level analysis, stores true-positive curves, module-coverage curves, filtered variants, and mPR AUC values.
-- `plot_mpr_tp_multi(dataset_names=None, colors=None, linewidth=1.8, show_filters=("all", "no_mtRibo_ETCI", "no_small_highAUPRC"))` shows true positives versus precision for one or more datasets after `mpr_prepare()`. This plot shows how many true-positive gene pairs are recovered as the precision cutoff changes.
-- `plot_mpr_modules_multi(dataset_names=None, colors=None, linewidth=1.8, show_filters=("all", "no_mtRibo_ETCI", "no_small_highAUPRC"), show_markers="auto")` shows how many functional-standard terms are covered at each precision cutoff. This plot focuses on term coverage, not pair counts.
-- `plot_mpr_summary(dataset_names=None, colors=None, variants="unfiltered", save=True, linewidth=1.8, show_markers="auto")` creates the standard mPR true-positive, module-coverage, and mPR AUC summary plots in one call.
-- Newer mPR functions also accept `variants`, with values `"unfiltered"`, `"without_mt_ribo_etci"`, `"without_small_high_auprc"`, or `"all"`.
+- `mpr_prepare(name, tp_th=1, percent_th=0.1)` prepares the single unfiltered module-coverage mPR curve for one dataset.
+- `plot_mpr_module_coverage_curve(dataset_names=None, colors=None, linewidth=1.8, show_markers="auto")` compares unfiltered mPR curves across datasets.
+- `plot_mpr_summary(...)` creates the unfiltered module-coverage plot and the dataset-level mPR AUC plot. It does not create a global PR plot.
+- `mpr_filter(name, size_th=30, auprc_th=0.4, ...)` lazily computes the three predefined module-coverage filter variants. `plot_mpr_filter()` plots them and returns the variant AUC table alongside the axes.
+- `globalpr_filter(name, size_th=30, auprc_th=0.4, ...)` lazily computes the matching global PR variants. `plot_globalpr_filter()` plots them.
+- Filter plotting functions never start calculations automatically; run the matching calculation once for every selected dataset first.
 
 Export:
 
