@@ -1238,7 +1238,7 @@ wheels = [
 
 [[package]]
 name = "pflex"
-version = "1.4"
+version = "1.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "art" },
