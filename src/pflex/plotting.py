@@ -170,8 +170,9 @@ def _trim_pr_xaxis(ax, min_precision=0.05, x_min=10):
         if keep.any():
             x_max = max(x_max, float(x[keep].max()))
     if x_max > x_min:
-        # Round up to the next power of ten so the axis ends on a labelled tick.
-        ax.set_xlim(x_min, 10 ** np.ceil(np.log10(x_max * 1.05)))
+        # Label the next power of ten and let the axis (and curves) run on a
+        # little past it, so the line does not stop exactly on the last tick.
+        ax.set_xlim(x_min, 10 ** (np.ceil(np.log10(x_max * 1.05)) + 0.12))
 
 
 def _publication_style(func):
@@ -231,6 +232,13 @@ def _seg_box_hit(p, q, box, n=12):
     xs = p[0] + t * (q[0] - p[0])
     ys = p[1] + t * (q[1] - p[1])
     return bool(np.any((xs > box[0]) & (xs < box[2]) & (ys > box[1]) & (ys < box[3])))
+
+
+def _segments_intersect(p1, p2, p3, p4):
+    def orient(a, b, c):
+        return np.sign((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+    return (orient(p1, p2, p3) * orient(p1, p2, p4) < 0
+            and orient(p3, p4, p1) * orient(p3, p4, p2) < 0)
 
 
 def _nearest_on_box(box, x, y):
@@ -311,11 +319,11 @@ def _place_scatter_labels(
     bbox_props = dict(facecolor="white", edgecolor="none", pad=0.5) if show_text_background else None
     gap = 1.5 * pt
     angles = np.deg2rad(np.arange(0, 360, 15))
-    radii = np.array([4, 7, 10, 14, 19, 25, 32, 40, 50, 65, 80, 100]) * pt
+    radii = np.array([4, 7, 10, 14, 19, 25, 32, 40, 50, 65, 80, 100, 125, 150]) * pt
     min_link = 3 * pt  # every label gets a visible connector, however short
     fixed_boxes = np.array(placed_boxes, dtype=float).reshape(-1, 4)
     samples = np.linspace(0.1, 1.0, 12)
-    n_keep = 80  # cheapest candidates per label kept for the joint search
+    n_keep = 120  # cheapest candidates per label kept for the joint search
 
     def static_candidates(group):
         """All candidate spots for one label with the cost that does not depend
@@ -339,9 +347,12 @@ def _place_scatter_labels(
                 if np.any(_rect_point_dist(padded, *sig_xy.T) < sig_r):
                     continue  # never hide a highlighted point under text
                 r_pt = radius / pt
-                cost = 0.5 * r_pt + 0.01 * r_pt ** 2  # short connectors are much preferred
-                if len(bg_xy) and np.any(_rect_point_dist(padded, *bg_xy.T) < bg_r):
-                    cost += 1e4  # covering grey points only when no free spot exists
+                cost = 0.5 * r_pt + 0.02 * r_pt ** 2  # short connectors are much preferred
+                if len(bg_xy):
+                    # Each covered grey point costs more than a long connector or a
+                    # crossing: labels cover grey points only when nothing else fits,
+                    # and then as few as possible.
+                    cost += 150 * np.count_nonzero(_rect_point_dist(padded, *bg_xy.T) < bg_r)
                 for a, b in lines_px:
                     if _seg_box_hit(a, b, padded, n=400):
                         cost += 8
@@ -358,6 +369,9 @@ def _place_scatter_labels(
                     cost += 1e3 * np.count_nonzero(_seg_point_dist(p, q, *sig_xy[crossed].T) < sig_r[crossed])
                     if len(bg_xy):
                         cost += 50 * np.count_nonzero(_seg_point_dist(p, q, *bg_xy.T) < bg_r)
+                    for a, b in lines_px:  # connector crossing a reference line (diagonal)
+                        if _segments_intersect(p, q, a, b):
+                            cost += 40
                 rows.append((cost, (ax_, ay_), ha, va, padded, links))
         rows.sort(key=lambda row: row[0])
         rows = rows[:n_keep]
@@ -412,7 +426,7 @@ def _place_scatter_labels(
                                - (q[..., 1] - p[..., 1]) * (r[..., 0] - p[..., 0]))
 
             cross = (orient(a, b, c) * orient(a, b, d) < 0) & (orient(c, d, a) * orient(c, d, b) < 0)
-            cost += 300 * cross.sum(axis=(1, 2))
+            cost += 1500 * cross.sum(axis=(1, 2))  # crossing connectors read badly
         return cost
 
     for group in groups:
@@ -687,7 +701,7 @@ def plot_per_module_scatter(
     point_scale=1.0,
     spine_offset=4,
     diagonal_color='0.6',
-    size_legend=False,
+    size_legend=True,
     title="Complex-level AUPRC comparison",
     caption="Circle area scales with module size. Colored: top {n_top} in one dataset only; "
             "labelled grey: top {n_top} in both.",
@@ -705,9 +719,10 @@ def plot_per_module_scatter(
 
     Parameters
     ----------
-    n_labels : int or None
-        How many highlighted modules to label. Modules far from the diagonal
-        and with high scores are labelled first. ``None`` labels all of them.
+    n_labels : deprecated
+        Ignored. Every highlighted module (top ``n_top`` in either dataset,
+        including those top in both) is labelled; use ``n_top`` to change
+        how many are highlighted.
     short_labels : bool
         Label with the first word of the module name ("FA core complex" ->
         "FA"); nearby modules with the same short name share one label.
@@ -720,7 +735,8 @@ def plot_per_module_scatter(
     spine_offset : float
         Points by which the x/y axis lines are moved away from the data.
     size_legend : bool
-        Add a small legend explaining circle size.
+        Show reference circle sizes (5, 10, 50 genes) under the plot, above
+        the caption.
     pair : tuple of two dataset names, optional
         Plot only this pair (x, y). Defaults to every pair, or the first pair
         when drawing into ``ax``.
@@ -733,6 +749,11 @@ def plot_per_module_scatter(
     input_colors = dload("input", "colors")
     input_colors = {_sanitize(k): v for k, v in input_colors.items()} if input_colors else {}
     label_map = label_map or {}
+    if n_labels is not None:
+        log.warning(
+            "plot_per_module_scatter: n_labels is ignored; every highlighted module is "
+            "labelled. Use n_top to change how many modules are highlighted."
+        )
 
     if len(rdict) < 2:
         log.warning(
@@ -815,7 +836,6 @@ def plot_per_module_scatter(
         ax.set_xlabel(f"{_display_name(pair[0])} AUPRC")
         ax.set_ylabel(f"{_display_name(pair[1])} AUPRC")
         _set_title(ax, (title or "").format(x=_display_name(pair[0]), y=_display_name(pair[1])))
-        _caption(ax, (caption or "").format(n_top=n_top))
 
         # Nature style: no grid, open top/right spines, axes pulled away from the data.
         ax.grid(False)
@@ -826,29 +846,31 @@ def plot_per_module_scatter(
 
         legend = None
         if size_legend:
-            steps = [g for g in (10, 50) if g <= n_genes.max()] or [int(n_genes.max())]
+            steps = [g for g in (5, 10, 50) if g <= n_genes.max()] or [int(n_genes.max())]
             handles = [
                 Line2D([], [], linestyle='', marker='o', markerfacecolor=nonsig_color,
                        markeredgecolor=nonsig_border_color, markeredgewidth=nonsig_border_width,
                        markersize=np.sqrt(g * 1.25 * point_scale), label=str(g))
                 for g in steps
             ]
+            # Under the x label (fixed gap in font sizes), left-aligned with the axes.
             legend = ax.legend(
-                handles=handles, title="Genes", loc="best", frameon=False,
-                ncol=len(handles), handletextpad=0.1, columnspacing=0.5,
-                borderaxespad=0.1, borderpad=0.1, title_fontsize=fontsize, fontsize=fontsize,
+                handles=handles, title="Genes in module", loc="upper left",
+                bbox_to_anchor=(0.0, 0.0), frameon=False, ncol=len(handles),
+                handletextpad=0.2, columnspacing=1.0, borderaxespad=4.6, borderpad=0.0,
+                title_fontsize=fontsize, fontsize=fontsize,
             )
+            legend._legend_box.align = "left"
+        _caption(ax, (caption or "").format(n_top=n_top), below=[ax] + ([legend] if legend else []))
 
         if owns:
             fig.tight_layout()
 
-        if show_labels and n_labels != 0:
+        if show_labels:
             sig = df.loc[significant_indices, [pair[0], pair[1], "Name"]].dropna(subset=[pair[0], pair[1]])
-            # Most informative first: high scores that differ between datasets.
+            # Most informative first (placed first): high scores that differ between datasets.
             priority = sig[[pair[0], pair[1]]].max(axis=1) + (sig[pair[0]] - sig[pair[1]]).abs()
             order = priority.sort_values(ascending=False).index
-            if n_labels is not None:
-                order = order[:n_labels]
             label_points = [
                 (sig.loc[idx, pair[0]], sig.loc[idx, pair[1]], label_text(sig.loc[idx, "Name"]), sizes[idx])
                 for idx in order
@@ -858,13 +880,12 @@ def plot_per_module_scatter(
                 for idx in bg_df.index.append(significant_indices.difference(order))
             ]
 
-            def place(ax=ax, label_points=label_points, obstacles=obstacles, legend=legend):
+            def place(ax=ax, label_points=label_points, obstacles=obstacles):
                 ax.figure.canvas.draw()
                 _place_scatter_labels(
                     ax,
                     label_points,
                     obstacle_points=obstacles,
-                    obstacle_boxes=[legend.get_window_extent()] if legend else None,
                     obstacle_lines=[((0, 0), (1, 1))],
                     label_color=label_color,
                     show_text_background=show_text_background,
