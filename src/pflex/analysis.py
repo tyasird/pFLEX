@@ -25,6 +25,10 @@ from .preprocessing import (
     load_functional_standard,
 )
 from .utils import dsave, dload, _sanitize, normalize_analysis_genes
+from .style import PUBLICATION_RC
+
+# numpy 2.0 renamed trapz to trapezoid; numpy 2.5 removed the old name.
+_trapz = getattr(np, "trapezoid", None) or np.trapz
 
 import matplotlib as mpl
 
@@ -129,7 +133,7 @@ def initialize(config={}):
 def update_matploblib_config(config=None, font_family="Arial", layout="single"):
     """
     Configure matplotlib settings optimized for Nature journal figures:
-      - 7 pt fonts (labels, ticks, legend), 9 pt titles
+      - 8 pt fonts everywhere (style.PUBLICATION_RC), 300 dpi output
       - Thin spines (0.5 pt), ticks out (left/bottom only), no minor ticks
       - No grid, clean minimalist look
       - Colorblind-friendly Tableau 10 color cycle
@@ -226,6 +230,13 @@ def update_matploblib_config(config=None, font_family="Arial", layout="single"):
         "pdf.use14corefonts": False,
         "svg.fonttype": "none",
     })
+    # Same 8 pt style as pflex's own plots (style.PUBLICATION_RC), so user
+    # figures and pflex figures match.
+    mpl.rcParams.update(PUBLICATION_RC)
+    mpl.rcParams["font.sans-serif"] = [font_family] + [
+        f for f in PUBLICATION_RC["font.sans-serif"] if f != font_family
+    ]
+    mpl.rcParams["savefig.dpi"] = config.get("plotting", {}).get("dpi", 300)
 
 
 def _sort_ascending_for_dataset(dataset_name):
@@ -388,7 +399,7 @@ def _corrected_auc(df: pd.DataFrame) -> float:
     valid = df[["precision", "recall"]].replace([np.inf, -np.inf], np.nan).dropna()
     if len(valid) < 2:
         return np.nan
-    return np.trapz(valid["precision"], valid["recall"]) - valid["precision"].iloc[-1]
+    return _trapz(valid["precision"], valid["recall"]) - valid["precision"].iloc[-1]
 
 def _build_gene_to_pair_indices(pairwise_df):
     indices = pairwise_df.index.values
@@ -497,7 +508,7 @@ def _process_chunk(chunk_terms, min_genes, memmap_path, gene_to_pair_indices):
                 # Compute regular AUC
                 local_auc_scores[idx] = metrics.auc(recall, precision)
                 # Compute corrected AUC using the same logic as _corrected_auc function
-                local_corrected_auc_scores[idx] = np.trapz(precision, recall) - precision.iloc[-1]
+                local_corrected_auc_scores[idx] = _trapz(precision, recall) - precision.iloc[-1]
 
         return {'auc': local_auc_scores, 'corrected_auc': local_corrected_auc_scores}
     
@@ -870,7 +881,7 @@ def perform_corr(df, corr_func):
         corr = np.ma.corrcoef(M)
         arr  = corr.filled(np.nan)
         df_corr = pd.DataFrame(arr, index=df.index, columns=df.index)
-        np.fill_diagonal(df_corr.values, np.nan)
+        df_corr = _nan_diagonal(df_corr)
         # check shape is x_axis x x_axis
         if df_corr.shape != (x_axis, x_axis):
             raise ValueError(f"Correlation matrix shape mismatch: expected ({x_axis}, {x_axis}), got {df_corr.shape}")
@@ -880,7 +891,7 @@ def perform_corr(df, corr_func):
     elif corr_func == "numpy_without_mask":
         corr = np.corrcoef(df.values)
         df_corr = pd.DataFrame(corr, index=df.index, columns=df.index)
-        np.fill_diagonal(df_corr.values, np.nan)
+        df_corr = _nan_diagonal(df_corr)
         if df_corr.shape != (x_axis, x_axis):
             raise ValueError(f"Correlation matrix shape mismatch: expected ({x_axis}, {x_axis}), got {df_corr.shape}")
         log.done("Correlation.")
@@ -889,7 +900,7 @@ def perform_corr(df, corr_func):
     
     elif corr_func == "numba":
         corr = fast_corr(df)
-        np.fill_diagonal(corr.values, np.nan)
+        corr = _nan_diagonal(corr)
         if corr.shape != (x_axis, x_axis):
             raise ValueError(f"Correlation matrix shape mismatch: expected ({x_axis}, {x_axis}), got {corr.shape}")
         log.done("Correlation using Numba.")
@@ -898,10 +909,21 @@ def perform_corr(df, corr_func):
     else:
         # Compute correlations and modify diagonal in-place
         corr = df.T.corr()
-        np.fill_diagonal(corr.values, np.nan)
+        corr = _nan_diagonal(corr)
         if corr.shape != (x_axis, x_axis):
             raise ValueError(f"Correlation matrix shape mismatch: expected ({x_axis}, {x_axis}), got {corr.shape}")
         return corr
+
+def _nan_diagonal(corr):
+    """Return ``corr`` with NaN on the diagonal (self-correlations).
+
+    Works on a copy: with pandas >= 3 (copy-on-write) ``DataFrame.values`` is
+    read-only, so filling it in place raises.
+    """
+    arr = corr.to_numpy(dtype=float, copy=True)
+    np.fill_diagonal(arr, np.nan)
+    return pd.DataFrame(arr, index=corr.index, columns=corr.columns)
+
 
 def fast_corr(df):
     @njit(parallel=True)
@@ -1504,7 +1526,7 @@ def _mpr_modules_auc(
     if x.size < 2:
         return 0.0
 
-    return float(np.trapz(y, x))
+    return float(_trapz(y, x))
 
 
 

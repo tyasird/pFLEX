@@ -117,7 +117,7 @@ config = {
     },
     "plotting": {
         "save_plot": True,
-        "output_type": "png",
+        "output_type": "pdf",
     },
 }
 ```

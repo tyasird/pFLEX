@@ -70,7 +70,7 @@ config = {
     },
     "plotting": {
         "save_plot": True,
-        "output_type": "png",
+        "output_type": "pdf",
     },
     "logging": {
         "visible_levels": ["DONE", "INFO", "WARNING"],
@@ -93,6 +93,7 @@ Configuration keys:
 - `per_module.n_jobs`: worker count for per-module analysis.
 - `plotting.save_plot`: when `True`, saves figures to `output_folder`.
 - `plotting.output_type`: figure extension, such as `"png"` or `"pdf"`.
+- `plotting.dpi`: resolution of raster output such as PNG (default `300`). Vector formats (`"pdf"`, `"svg"`) keep text editable.
 - `logging.visible_levels`: log levels to print during the run. Available values are `"STARTED"`, `"PROGRESS"`, `"DONE"`, `"INFO"`, `"WARNING"`, and `"ERROR"`. A quiet run can use `["DONE", "WARNING"]`; a more verbose run can use `["STARTED", "PROGRESS", "DONE", "INFO", "WARNING"]`.
 
 ## Loading
@@ -179,6 +180,9 @@ flex.save_results_to_csv()
 
 Plotting functions read cached analysis results from the current run. If `plotting.save_plot` is `True`, figures are written to `output_folder`.
 
+All figures are produced at their final print size (about 3 inches wide, a single journal column) with 8 pt Arial text and thin lines, so they can go into a manuscript without rescaling.
+Each plot has a descriptive default title and a small grey caption under it (`title=` / `caption=` to change them, `""` to remove). Precision-recall, mPR and scatter plots use a square plot area whatever the axis range. Dataset legends go into an empty corner of the plot when one exists, otherwise outside on the right. The complex-filter comparisons (`plot_globalpr_filter`, `plot_mpr_filter`) show one small panel per filter, with datasets in their usual colours and solid lines; in `plot_panels` give them two columns: `(flex.plot_globalpr_filter, {}, 2)`.
+
 Global plots:
 
 - `plot_precision_recall_curve(line_width=2.0, hide_minor_ticks=True)` shows precision against the cumulative number of true-positive gene pairs. This is the main global performance curve; higher precision at the same true-positive count means better ranking.
@@ -187,14 +191,28 @@ Global plots:
 Per-module plots:
 
 - `plot_significant_modules()` counts how many functional-standard terms pass AUPRC thresholds `0.1`, `0.2`, `0.3`, `0.4`, and `0.5`. It returns the threshold-by-dataset count table, which helps compare how many terms are strongly recovered in each dataset.
-- `plot_per_module_scatter(n_top=10, ...)` compares per-module AUPRC values between pairs of datasets. Each point is one functional-standard term. Points near the diagonal perform similarly in both datasets; points far from the diagonal are terms that are stronger in one dataset.
+- `plot_per_module_scatter(n_top=10, ...)` compares per-module AUPRC values between pairs of datasets. Each point is one functional-standard term. Points near the diagonal perform similarly in both datasets; points far from the diagonal are terms that are stronger in one dataset. The figure is publication-ready at its final size (3 × 3 in, 8 pt Arial, 0.25 pt borders, editable text in PDF/SVG). By default every highlighted term is labelled (`n_labels=None`; give a number to label only the most informative ones), using their first word (`short_labels=True`); nearby terms with the same short name share one label, and `label_map={"Full name": "Label"}` overrides individual labels. Labels that cannot be placed without overlap are left out with a warning.
 - `plot_per_module_scatter_by_size(n_labels=10, n_top=10, ...)` plots each term's per-module AUPRC against the number of genes used for that term. It helps distinguish compact high-performing terms from broader modules.
 - `plot_module_contributions(min_pairs=10, min_precision_cutoff=0.5, num_module_to_show=10, ...)` shows which terms contribute most to true-positive gene pairs across precision cutoffs. It requires `module_contributions(name)` first and helps identify which biological terms drive the global precision-recall curve.
+
+Multi-panel figures:
+
+- Every plot function accepts `ax=` and then draws into that axes instead of a new figure (nothing is saved). Functions that make one figure per dataset or pair take `dataset=` / `pair=` to choose which one.
+- `plot_panels(panels, ncols=2, panel_size=(3.4, 3.6))` builds a figure labelled a, b, c, ... from those functions. Each entry is a function or a `(function, kwargs)` tuple; ticks, labels and legends are fitted inside each panel's cell, and the result is saved as `figure_panels.<output_type>` (`outname=` to change).
+
+```python
+flex.plot_panels([
+    flex.plot_precision_recall_curve,
+    (flex.plot_per_module_scatter, {"pair": ("Skin", "Soft Tissue")}),
+    flex.plot_auc_scores,
+    flex.plot_mpr_module_coverage_curve,
+], ncols=2)
+```
 
 mPR preparation and plots:
 
 - `mpr_prepare(name, tp_th=1, percent_th=0.1)` prepares the single unfiltered module-coverage mPR curve for one dataset.
-- `plot_mpr_module_coverage_curve(dataset_names=None, colors=None, linewidth=1.8, show_markers="auto")` compares unfiltered mPR curves across datasets.
+- `plot_mpr_module_coverage_curve(dataset_names=None, colors=None, linewidth=1.0, show_markers="auto")` compares unfiltered mPR curves across datasets.
 - `plot_mpr_summary(...)` creates the unfiltered module-coverage plot and the dataset-level mPR AUC plot. It does not create a global PR plot.
 - `mpr_filter(name, size_th=30, auprc_th=0.4, ...)` lazily computes the three predefined module-coverage filter variants. `plot_mpr_filter()` plots them and returns the variant AUC table alongside the axes.
 - `globalpr_filter(name, size_th=30, auprc_th=0.4, ...)` lazily computes the matching global PR variants. `plot_globalpr_filter()` plots them.

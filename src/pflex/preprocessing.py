@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
-from .utils import dsave, dload, normalize_analysis_genes
+from .utils import dsave, dload, normalize_analysis_genes, _sanitize
 from tqdm import tqdm
 from .logging_config import log
 tqdm.pandas()
@@ -136,7 +136,9 @@ def load_datasets(files, continue_with_common_genes=False):
         "colors": {
             k: v.get("color", None) if isinstance(v, dict) else None
             for k, v in files.items()
-        }
+        },
+        # Original names for plot labels ("Soft Tissue"); results are keyed by _sanitize(name).
+        "names": {_sanitize(k): k for k in files},
     }, "input")
     log.done(f"Datasets loaded.")
     return data_dict  , common_genes

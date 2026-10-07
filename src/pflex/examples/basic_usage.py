@@ -30,7 +30,7 @@ default_config = {
     "analysis_genes": "shared",  # or "dataset_specific" (genes present per dataset)
     "plotting": {
         "save_plot": True,
-        "output_type": "png",
+        "output_type": "pdf",
     },
     "preprocessing": {
         "fill_na": True,
