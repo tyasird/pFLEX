@@ -118,6 +118,9 @@ config = {
     "plotting": {
         "save_plot": True,
         "output_type": "pdf",
+        "figure_scale": 0.75,  # plot-area size; 0.75 = three panels across A4, 0.55 = four
+        "titles": False,       # default plot titles
+        "captions": False,     # small grey description under each plot
     },
 }
 ```
@@ -158,6 +161,21 @@ flex.save_results_to_csv()
 `mpr_prepare()` computes only the standard, unfiltered module-coverage mPR
 curve. `plot_mpr_summary()` plots that curve and the corresponding dataset-level
 mPR AUC values; it does not produce a duplicate global precision-recall plot.
+
+Figures are made at their final print size: 8 pt Arial text, thin lines and
+editable text in PDF/SVG. `plotting.figure_scale` sets the plot-area size
+(default `0.75`, three panels across A4; `0.55` fits four), and
+`plotting.titles` / `plotting.captions` switch the default titles and short grey
+descriptions on. Plots can be combined into one lettered multi-panel figure:
+
+```python
+flex.plot_panels([
+    flex.plot_precision_recall_curve,
+    (flex.plot_per_module_scatter, {"pair": ("Skin", "Soft Tissue")}),
+    flex.plot_auc_scores,
+    flex.plot_mpr_module_coverage_curve,
+], ncols=2)
+```
 
 The predefined complex-filter comparisons are optional and computed lazily:
 
