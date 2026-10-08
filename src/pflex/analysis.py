@@ -998,7 +998,9 @@ def binary(corr):
     if is_symmetric(corr):
         corr = convert_full_to_half_matrix(corr)
     
-    stack = corr.stack().rename_axis(index=['gene1', 'gene2']).\
+    # dropna(): pandas >= 3 stack() keeps NaN cells (the masked lower triangle and
+    # diagonal); pandas 2 dropped them. Without it every pair is counted twice.
+    stack = corr.stack().dropna().rename_axis(index=['gene1', 'gene2']).\
             reset_index().rename(columns={0: 'score'})
     if stack.empty:
         log.done("Pair-wise conversion.")
