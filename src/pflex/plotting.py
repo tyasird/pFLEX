@@ -22,8 +22,8 @@ from .style import PUBLICATION_RC
 
 
 def _bar_figsize(n_bars):
-    """Standalone bar chart size: narrow bars, width grows with the bar count."""
-    return (0.6 + 0.4 * n_bars, 2.0)
+    """Bar chart plot area: narrow bars, width grows with the bar count."""
+    return (0.2 + 0.4 * n_bars, 2.0)
 
 
 def _value_bars(ax, names, values, colors, fmt="%.3f"):
@@ -44,7 +44,7 @@ def _value_bars(ax, names, values, colors, fmt="%.3f"):
 # Precision-recall and mPR panels use a square plot area. The box aspect is
 # physical, so it holds whether the TP axis ends at 10^2, 10^3 or 10^4.
 CURVE_BOX_ASPECT = 1.0
-CURVE_FIGSIZE = (3.0, 3.0)
+CURVE_FIGSIZE = (2.0, 2.0)  # plot area at figure_scale 1
 CAPTION_COLOR = "0.4"
 CAPTION_SIZE = 6.5
 
@@ -56,7 +56,7 @@ def _caption(ax, text, below=None, x_ax=None):
     ``below``) and is re-positioned at every draw, so it follows layout changes
     in :func:`plot_panels`. ``x_ax`` sets the left edge (default ``ax``).
     """
-    if not text:
+    if not text or not _STYLE["captions"]:
         return None
     import textwrap
     from matplotlib.transforms import Bbox
@@ -83,8 +83,12 @@ def _caption(ax, text, below=None, x_ax=None):
 
 
 def _set_title(ax, text, **kwargs):
-    """Axes title wrapped onto several lines when it is wider than the axes."""
-    if not text:
+    """Axes title wrapped onto several lines when it is wider than the axes.
+
+    Skipped unless titles are switched on (config ``plotting.titles`` or an
+    explicit ``title=`` argument).
+    """
+    if not text or not _STYLE["titles"]:
         return ax.set_title("", **kwargs)
     import textwrap
 
@@ -126,8 +130,8 @@ def _artist_points(ax):
     return np.vstack(pts) if pts else np.empty((0, 2))
 
 
-def _place_legend(ax, handles=None, labels=None, outside_ax=None, **kwargs):
-    """Legend in an empty corner of ``ax`` if one exists, otherwise outside on the right.
+def _place_legend(ax, handles=None, labels=None, above_ax=None, above_pad=0.5, **kwargs):
+    """Legend in an empty corner of ``ax`` if one exists, otherwise above the plot.
 
     Corners are tried in the order upper right, lower left, upper left, lower right;
     a corner counts as empty when no line, fill or marker falls under the legend.
@@ -149,8 +153,15 @@ def _place_legend(ax, handles=None, labels=None, outside_ax=None, **kwargs):
         if not inside.any():
             return legend
         legend.remove()
-    target = outside_ax or ax
-    return target.legend(*args, loc="upper left", bbox_to_anchor=(1.02, 1.0), **kwargs)
+    # No free corner: horizontally above the plot, so the panel keeps its width.
+    target = above_ax or ax
+    legend = target.legend(*args, loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2,
+                           borderaxespad=above_pad, columnspacing=1.0, **kwargs)
+    if target.get_title():
+        fig.canvas.draw()
+        height_pt = legend.get_window_extent(renderer).height * 72 / fig.dpi
+        target.set_title(target.get_title(), pad=height_pt + 8)
+    return legend
 
 
 
@@ -175,21 +186,150 @@ def _trim_pr_xaxis(ax, min_precision=0.05, x_min=10):
         ax.set_xlim(x_min, 10 ** (np.ceil(np.log10(x_max * 1.05)) + 0.12))
 
 
+# Settings for the plot call in progress (set by _publication_style).
+_STYLE = {"scale": 0.75, "titles": False, "captions": False}
+
+
 def _publication_style(func):
     """Run a plotting function under PUBLICATION_RC.
 
-    Output resolution comes from ``config["plotting"]["dpi"]`` (default 300).
+    Reads from ``config["plotting"]``:
+
+    - ``dpi``: raster resolution (default 300);
+    - ``figure_scale``: plot-area size relative to the design size (a 2-inch
+      square for curves and scatters). Default 0.75: about 38 mm plot area,
+      three panels across A4; 0.55 fits four. Text stays 8 pt; only the plot
+      area changes;
+    - ``titles`` / ``captions``: draw the default title / grey caption
+      (default False). Passing ``title=`` or ``caption=`` shows it anyway.
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         rc = dict(PUBLICATION_RC)
         try:
-            rc["savefig.dpi"] = (dload("config") or {}).get("plotting", {}).get("dpi", 300)
+            plot_config = (dload("config") or {}).get("plotting", {})
         except Exception:
-            pass
-        with plt.rc_context(rc):
-            return func(*args, **kwargs)
+            plot_config = {}
+        rc["savefig.dpi"] = plot_config.get("dpi", 300)
+        previous = dict(_STYLE)
+        _STYLE.update(
+            scale=float(plot_config.get("figure_scale", 0.75)),
+            titles=bool(plot_config.get("titles", False)) or kwargs.get("title") is not None,
+            captions=bool(plot_config.get("captions", False)) or kwargs.get("caption") is not None,
+        )
+        try:
+            with plt.rc_context(rc):
+                return func(*args, **kwargs)
+        finally:
+            _STYLE.clear()
+            _STYLE.update(previous)
     return wrapper
+
+
+def _marker_area(genes, point_scale=1.0):
+    """Scatter marker area (pt^2) for a gene count.
+
+    A fixed base (a 2.5 pt circle) plus an area proportional to the gene count,
+    scaled with figure_scale. Every point stays visible and small modules still
+    differ in size (a hard minimum would make 2-10 gene modules look identical).
+    """
+    area = np.asarray(genes, dtype=float) * 1.25 * point_scale * _STYLE["scale"] ** 2
+    return 2.5 ** 2 + area
+
+
+def _unit_ticks(ax, which="xy"):
+    """Mark a 0-1 axis for tick fitting: a tick every 0.1, labels added once the
+    axis length is known (see _fit_unit_ticks)."""
+    from matplotlib.ticker import MultipleLocator
+
+    for name in which:
+        axis = ax.xaxis if name == "x" else ax.yaxis
+        axis.set_minor_locator(MultipleLocator(0.1))
+    # unlabelled ticks look like the labelled ones
+    ax.tick_params(which="minor", length=PUBLICATION_RC["xtick.major.size"],
+                   width=PUBLICATION_RC["xtick.major.width"])
+    ax._pflex_unit_ticks = which
+
+
+def _fit_unit_ticks(fig):
+    """Label 0-1 axes at the finest step (0.1, 0.2, 0.5, 1) whose labels fit.
+
+    Steps lie on the 0.1 tick grid, and both axes of a plot share the coarser
+    of their two steps so a square plot reads the same way on x and y.
+    """
+    renderer = fig.canvas.get_renderer()
+    axes = list(fig.axes) + [c for a in fig.axes for c in getattr(a, "child_axes", [])]
+    size_pt = PUBLICATION_RC["xtick.labelsize"]
+
+    def labels_for(step):
+        values = np.round(np.arange(0, 1 + 1e-9, step), 2)
+        return values, [f"{v:g}" for v in values]
+
+    for ax in axes:
+        if getattr(ax, "_pflex_log_ticks", False):
+            _fit_log_ticks(ax, renderer, size_pt)
+        which = getattr(ax, "_pflex_unit_ticks", "")
+        if not which:
+            continue
+        box = ax.get_window_extent(renderer)
+        steps = []
+        for name in which:
+            length_pt = (box.width if name == "x" else box.height) * 72 / fig.dpi
+            for step in (0.1, 0.2, 0.5, 1.0):
+                _, labels = labels_for(step)
+                # x labels sit side by side (~0.55 em per char); y labels stack (one line each)
+                need = (sum(len(t) for t in labels) * 0.55 * size_pt + len(labels) * 3
+                        if name == "x" else len(labels) * size_pt * 1.4)
+                if need <= length_pt:
+                    break
+            steps.append(step)
+        values, labels = labels_for(max(steps))
+        for name in which:
+            (ax.set_xticks if name == "x" else ax.set_yticks)(values, labels)
+
+
+def _fit_log_ticks(ax, renderer, size_pt):
+    """Tick every decade on a log x axis; label all of them if they fit,
+    otherwise every other one (10^1, 10^3, ...), keeping the unlabelled ticks."""
+    lo, hi = ax.get_xlim()
+    if lo <= 0 or hi <= lo:
+        return
+    powers = list(range(int(np.ceil(np.log10(lo) - 1e-9)), int(np.floor(np.log10(hi) + 1e-9)) + 1))
+    if not powers:
+        return
+    length_pt = ax.get_window_extent(renderer).width * ax.figure.dpi ** -1 * 72
+    # "10^3" is about 3 characters wide at 8 pt, plus a small gap
+    every = 1 if len(powers) * (3 * 0.55 * size_pt + 4) <= length_pt else 2
+    ticks = [10.0 ** k for k in powers]
+    labels = [f"$10^{{{k}}}$" if i % every == 0 else "" for i, k in enumerate(powers)]
+    ax.set_xticks(ticks, labels)
+
+
+def _wrap_axis_labels(fig):
+    """Break axis labels longer than their axis onto two lines (at the middle space).
+
+    Also labels 0-1 axes now that their length is known.
+    """
+    fig.canvas.draw()
+    _fit_unit_ticks(fig)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    axes = list(fig.axes)
+    axes += [child for ax in fig.axes for child in getattr(ax, "child_axes", [])]
+    for ax in axes:
+        if not ax.get_visible() or not ax.axison:
+            continue
+        box = ax.get_window_extent(renderer)
+        for label, length in ((ax.xaxis.label, box.width), (ax.yaxis.label, box.height)):
+            text = label.get_text()
+            if not text or "\n" in text or " " not in text:
+                continue
+            extent = label.get_window_extent(renderer)
+            if max(extent.width, extent.height) <= length:
+                continue
+            spaces = [i for i, ch in enumerate(text) if ch == " "]
+            cut = min(spaces, key=lambda i: abs(i - len(text) / 2))
+            label.set_text(text[:cut] + "\n" + text[cut + 1:])
 
 
 _LABEL_DROP = re.compile(r"\s*[\(\[].*?[\)\]]")
@@ -269,10 +409,13 @@ def _place_scatter_labels(
 
     Parameters
     ----------
-    label_points : list of (x, y, text, size)
+    label_points : list of (x, y, text, size[, direction])
         Points to label in data coordinates; ``size`` is the scatter ``s``
         value (points^2). Points sharing a text within ``merge_distance``
         points of each other get one label with several connectors.
+        ``direction`` (optional) is the preferred label direction in radians
+        (0 = right, pi/2 = up) or a tuple of acceptable directions; spots
+        away from it cost more, so labels go that way when there is room.
     obstacle_points : list of (x, y, size)
         Other drawn points that labels should avoid; covered only when no free
         spot exists.
@@ -299,14 +442,16 @@ def _place_scatter_labels(
         return to_px(arr), radius
 
     valid = [p for p in label_points if not (pd.isna(p[0]) or pd.isna(p[1]))]
-    sig_xy, sig_r = as_px([(x, y, s) for x, y, _, s in valid])
+    sig_xy, sig_r = as_px([(p[0], p[1], p[3]) for p in valid])
+    prefer = [p[4] if len(p) > 4 else None for p in valid]
     bg_xy, bg_r = as_px([p for p in (obstacle_points or []) if not (pd.isna(p[0]) or pd.isna(p[1]))])
     lines_px = [(to_px(a), to_px(b)) for a, b in (obstacle_lines or [])]
     placed_boxes = [(b.x0, b.y0, b.x1, b.y1) for b in (obstacle_boxes or [])]
 
     # Merge nearby points that share a label text (e.g. several "FA" modules).
     groups = []
-    for i, (_, _, text, _) in enumerate(valid):
+    for i, point in enumerate(valid):
+        text = point[2]
         for group in groups:
             if group["text"] == text and np.max(
                 np.hypot(*(sig_xy[group["members"]] - sig_xy[i]).T)
@@ -348,6 +493,13 @@ def _place_scatter_labels(
                     continue  # never hide a highlighted point under text
                 r_pt = radius / pt
                 cost = 0.5 * r_pt + 0.02 * r_pt ** 2  # short connectors are much preferred
+                # Preferred direction: straight that way is free, diagonal costs a
+                # little, sideways more, the opposite way most (but all far less
+                # than crossing connectors, which stay the last resort).
+                wanted = prefer[members[0]]
+                if wanted is not None:
+                    options = wanted if isinstance(wanted, (tuple, list)) else (wanted,)
+                    cost += min(60 * (1 - np.cos(angle - a)) for a in options)
                 if len(bg_xy):
                     # Each covered grey point costs more than a long connector or a
                     # crossing: labels cover grey points only when nothing else fits,
@@ -526,6 +678,20 @@ def _place_scatter_labels(
     return texts
 
 
+def _unit_words():
+    """("complex", "complexes") for CORUM, otherwise ("module", "modules")."""
+    try:
+        standard = str((dload("config") or {}).get("functional_standard", "")).upper()
+    except Exception:
+        standard = ""
+    return ("complex", "complexes") if standard == "CORUM" else ("module", "modules")
+
+
+def _tp_axis_label():
+    """Label of the true-positive count axis of global PR plots."""
+    return f"Co-{_unit_words()[0]}\nmembership (TP)"
+
+
 def _display_name(key):
     """Dataset name as the user wrote it ("Soft Tissue"), not its file-safe key ("Soft_Tissue")."""
     names = dload("input", "names")
@@ -535,10 +701,25 @@ def _display_name(key):
     return names.get(_sanitize(key), key)
 
 
-def _start(ax, figsize):
-    """Return ``(fig, ax, owns)``: a new standalone figure, or the panel axes passed in."""
+# Fixed room (inches) around the plot area for 8 pt ticks, two-line axis
+# labels and legends; it does not shrink with figure_scale because text doesn't.
+_MARGINS = {"left": 0.8, "right": 0.25, "bottom": 0.75, "top": 0.35}
+
+
+def _start(ax, size):
+    """Return ``(fig, ax, owns)``: a new standalone figure, or the panel axes passed in.
+
+    ``size`` is the plot-area (axes box) size in inches at ``figure_scale`` 1;
+    it is multiplied by ``figure_scale``. Text keeps its size, so the figure
+    gets fixed margins for it (the saved file is cropped to its content).
+    """
     if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
+        scale = _STYLE["scale"]
+        w, h = size[0] * scale, size[1] * scale
+        m = _MARGINS
+        W, H = w + m["left"] + m["right"], h + m["bottom"] + m["top"]
+        fig = plt.figure(figsize=(W, H))
+        ax = fig.add_axes([m["left"] / W, m["bottom"] / H, w / W, h / H])
         return fig, ax, True
     return ax.figure, ax, False
 
@@ -552,8 +733,10 @@ def _finish(fig, owns, config, filename, save=None):
         output_type = plot_config.get("output_type", "pdf")
         path = Path(config["output_folder"]) / f"{filename}.{output_type}"
         path.parent.mkdir(parents=True, exist_ok=True)
+        _wrap_axis_labels(fig)
         fig.savefig(path, bbox_inches="tight", format=output_type)
     if plot_config.get("show_plot", True):
+        _wrap_axis_labels(fig)
         plt.show()
     plt.close(fig)
 
@@ -573,13 +756,15 @@ def _setup_log_tp_axis(ax, hide_minor_ticks):
     if hide_minor_ticks:
         ax.xaxis.set_minor_locator(NullLocator())
         ax.xaxis.set_minor_formatter(NullFormatter())
+    ax._pflex_log_ticks = True  # every decade ticked; labels fitted in _fit_unit_ticks
 
 
 def _finish_pr_axes(ax, min_precision, title=None):
     ax.set_box_aspect(CURVE_BOX_ASPECT)
-    ax.set(xlabel="Number of true positives", ylabel="Precision")
+    ax.set(xlabel=_tp_axis_label(), ylabel="Precision")
     _set_title(ax, title)
     ax.set_ylim(0, 1)
+    _unit_ticks(ax, "y")
     _trim_pr_xaxis(ax, min_precision)
     _place_legend(ax)
     ax.grid(False)
@@ -685,7 +870,7 @@ def plot_per_module_scatter(
     n_top=10,
     n_labels=None,
     sig_color='black',
-    nonsig_color='#E5E5E5',
+    nonsig_color='white',
     label_color='black',
     border_color=None,
     border_width=0.25,
@@ -697,14 +882,18 @@ def plot_per_module_scatter(
     label_map=None,
     max_label_chars=12,
     fontsize=8,
-    figsize=(3, 3),
+    figsize=(2.0, 2.0),
     point_scale=1.0,
     spine_offset=4,
     diagonal_color='0.6',
     size_legend=True,
+    size_legend_genes=(5, 20, 100),
+    labels_per_dataset=4,
+    labels_in_both=2,
     title="Complex-level AUPRC comparison",
-    caption="Circle area scales with module size. Colored: top {n_top} in one dataset only; "
-            "labelled grey: top {n_top} in both.",
+    caption="Colored and labelled: the {k} best modules specific to each dataset (of the "
+            "top {n_top}); grey labelled: the {k_both} best in both. Circle area scales "
+            "with module size.",
     pair=None,
     ax=None,
 ):
@@ -719,10 +908,17 @@ def plot_per_module_scatter(
 
     Parameters
     ----------
+    n_top : int
+        Modules ranked in the top ``n_top`` of a dataset are candidates.
+    labels_per_dataset : int
+        Colour and label the best ``labels_per_dataset`` candidates that are
+        top in only that dataset (default 4 per dataset).
+    labels_in_both : int
+        Label (in grey) the best ``labels_in_both`` modules top in both
+        datasets, ranked by their mean AUPRC (default 2). Every coloured point
+        is labelled; all other modules are grey.
     n_labels : deprecated
-        Ignored. Every highlighted module (top ``n_top`` in either dataset,
-        including those top in both) is labelled; use ``n_top`` to change
-        how many are highlighted.
+        Ignored; use ``labels_per_dataset`` / ``labels_in_both``.
     short_labels : bool
         Label with the first word of the module name ("FA core complex" ->
         "FA"); nearby modules with the same short name share one label.
@@ -735,8 +931,9 @@ def plot_per_module_scatter(
     spine_offset : float
         Points by which the x/y axis lines are moved away from the data.
     size_legend : bool
-        Show reference circle sizes (5, 10, 50 genes) under the plot, above
-        the caption.
+        Show reference circle sizes under the plot, above the caption.
+    size_legend_genes : tuple of int
+        Gene counts shown in the size legend (default 5, 20, 100).
     pair : tuple of two dataset names, optional
         Plot only this pair (x, y). Defaults to every pair, or the first pair
         when drawing into ``ax``.
@@ -751,8 +948,8 @@ def plot_per_module_scatter(
     label_map = label_map or {}
     if n_labels is not None:
         log.warning(
-            "plot_per_module_scatter: n_labels is ignored; every highlighted module is "
-            "labelled. Use n_top to change how many modules are highlighted."
+            "plot_per_module_scatter: n_labels is ignored; use labels_per_dataset "
+            "and labels_in_both."
         )
 
     if len(rdict) < 2:
@@ -777,7 +974,7 @@ def plot_per_module_scatter(
             df = pd.concat([df, val[key]], axis=1)
 
     n_genes = df['n_used_genes'] if 'n_used_genes' in df else pd.Series(1, index=df.index)
-    sizes = n_genes.astype(float) * 1.25 * point_scale
+    sizes = pd.Series(_marker_area(n_genes, point_scale), index=df.index)
 
     def label_text(name):
         if name in label_map:
@@ -788,19 +985,32 @@ def plot_per_module_scatter(
     for pair in column_pairs:
         extreme_indices_0 = df[pair[0]].sort_values(ascending=False).head(n_top).index
         extreme_indices_1 = df[pair[1]].sort_values(ascending=False).head(n_top).index
-        significant_indices = extreme_indices_0.union(extreme_indices_1)
-        significant_in_both = extreme_indices_0.intersection(extreme_indices_1)
-        significant_pair0_only = extreme_indices_0.difference(extreme_indices_1)
-        significant_pair1_only = extreme_indices_1.difference(extreme_indices_0)
+        top_in_both = extreme_indices_0.intersection(extreme_indices_1)
+        # Only the best few per group are coloured and labelled; the rest stay grey.
+        significant_pair0_only = (
+            df.loc[extreme_indices_0.difference(extreme_indices_1), pair[0]]
+            .sort_values(ascending=False).head(labels_per_dataset).index
+        )
+        significant_pair1_only = (
+            df.loc[extreme_indices_1.difference(extreme_indices_0), pair[1]]
+            .sort_values(ascending=False).head(labels_per_dataset).index
+        )
+        significant_in_both = (
+            df.loc[top_in_both, [pair[0], pair[1]]].mean(axis=1)
+            .sort_values(ascending=False).head(labels_in_both).index
+        )
+        significant_indices = significant_pair0_only.union(significant_pair1_only).union(significant_in_both)
 
         bg_df = df.drop(index=significant_indices)
         fig, ax, owns = _start(panel, figsize)
 
-        # Background cloud: light grey circles with hairline borders.
+        # Background: white circles with a grey hairline, largest drawn first so
+        # the white fill never hides a smaller circle.
+        bg_order = sizes[bg_df.index].sort_values(ascending=False).index
         ax.scatter(
-            bg_df[pair[0]], bg_df[pair[1]],
+            bg_df.loc[bg_order, pair[0]], bg_df.loc[bg_order, pair[1]],
             facecolors=nonsig_color, edgecolors=nonsig_border_color,
-            s=sizes[bg_df.index], linewidth=nonsig_border_width,
+            s=sizes[bg_order], linewidth=nonsig_border_width,
             zorder=1,
         )
 
@@ -830,11 +1040,9 @@ def plot_per_module_scatter(
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         ax.set_aspect('equal', adjustable='box')
-        ticks = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
-        ax.set_xticks(ticks)
-        ax.set_yticks(ticks)
-        ax.set_xlabel(f"{_display_name(pair[0])} AUPRC")
-        ax.set_ylabel(f"{_display_name(pair[1])} AUPRC")
+        _unit_ticks(ax, "xy")
+        ax.set_xlabel(f"{_display_name(pair[0])}\nper-module AUPRC")
+        ax.set_ylabel(f"{_display_name(pair[1])}\nper-module AUPRC")
         _set_title(ax, (title or "").format(x=_display_name(pair[0]), y=_display_name(pair[1])))
 
         # Nature style: no grid, open top/right spines, axes pulled away from the data.
@@ -846,33 +1054,51 @@ def plot_per_module_scatter(
 
         legend = None
         if size_legend:
-            steps = [g for g in (5, 10, 50) if g <= n_genes.max()] or [int(n_genes.max())]
+            steps = [g for g in size_legend_genes if g <= n_genes.max()] or [int(n_genes.max())]
             handles = [
                 Line2D([], [], linestyle='', marker='o', markerfacecolor=nonsig_color,
                        markeredgecolor=nonsig_border_color, markeredgewidth=nonsig_border_width,
-                       markersize=np.sqrt(g * 1.25 * point_scale), label=str(g))
+                       markersize=float(np.sqrt(_marker_area(g, point_scale))), label=str(g))
                 for g in steps
             ]
             # Under the x label (fixed gap in font sizes), left-aligned with the axes.
+            from matplotlib.transforms import offset_copy
+            # Left edge on the axes' left edge, below the offset spine, tick
+            # labels and the x label: 36 pt plus one line per extra label line.
+            below_pt = 36 + 10 * ax.get_xlabel().count("\n")
             legend = ax.legend(
                 handles=handles, title="Genes in module", loc="upper left",
-                bbox_to_anchor=(0.0, 0.0), frameon=False, ncol=len(handles),
-                handletextpad=0.2, columnspacing=1.0, borderaxespad=4.6, borderpad=0.0,
-                title_fontsize=fontsize, fontsize=fontsize,
+                bbox_to_anchor=(0.0, 0.0),
+                bbox_transform=offset_copy(ax.transAxes, fig=ax.figure, y=-below_pt, units="points"),
+                ncol=len(handles), frameon=True, fancybox=True,
+                handlelength=0.6, handletextpad=0.3, columnspacing=0.9,
+                borderaxespad=0.0, borderpad=0.35,
+                title_fontsize=fontsize, fontsize=fontsize, labelcolor=CAPTION_COLOR,
             )
+            # Reads as a key, not data: thin light-grey frame, grey text, title
+            # aligned with the first circle.
             legend._legend_box.align = "left"
-        _caption(ax, (caption or "").format(n_top=n_top), below=[ax] + ([legend] if legend else []))
+            legend.get_title().set_color(CAPTION_COLOR)
+            frame = legend.get_frame()
+            frame.set_edgecolor("0.75")
+            frame.set_linewidth(0.25)
+            frame.set_facecolor("white")
+            frame.set_boxstyle("round", pad=0.0, rounding_size=0.25)
+        _caption(ax, (caption or "").format(n_top=n_top, k=labels_per_dataset, k_both=labels_in_both),
+                 below=[ax] + ([legend] if legend else []))
 
-        if owns:
-            fig.tight_layout()
 
         if show_labels:
             sig = df.loc[significant_indices, [pair[0], pair[1], "Name"]].dropna(subset=[pair[0], pair[1]])
             # Most informative first (placed first): high scores that differ between datasets.
             priority = sig[[pair[0], pair[1]]].max(axis=1) + (sig[pair[0]] - sig[pair[1]]).abs()
             order = priority.sort_values(ascending=False).index
+            direction = {idx: 0.0 for idx in significant_pair0_only}          # x-specific: right
+            direction.update({idx: np.pi / 2 for idx in significant_pair1_only})  # y-specific: up
+            direction.update({idx: (3 * np.pi / 4, -np.pi / 4) for idx in significant_in_both})
             label_points = [
-                (sig.loc[idx, pair[0]], sig.loc[idx, pair[1]], label_text(sig.loc[idx, "Name"]), sizes[idx])
+                (sig.loc[idx, pair[0]], sig.loc[idx, pair[1]], label_text(sig.loc[idx, "Name"]),
+                 sizes[idx], direction.get(idx))
                 for idx in order
             ]
             obstacles = [
@@ -901,10 +1127,10 @@ def plot_per_module_scatter(
 
 @_publication_style
 def plot_per_module_scatter_by_size(
-    n_labels=10,
+    n_labels=5,
     n_top=10,
     sig_color='black',
-    nonsig_color='#E5E5E5',
+    nonsig_color='white',
     label_color='black',
     border_color=None,
     border_width=0.25,
@@ -915,7 +1141,7 @@ def plot_per_module_scatter_by_size(
     short_labels=True,
     label_map=None,
     max_label_chars=12,
-    figsize=(3, 3),
+    figsize=(2.0, 2.0),
     point_scale=1.0,
     spine_offset=4,
     title="Per-module AUPRC vs module size ({dataset})",
@@ -947,7 +1173,7 @@ def plot_per_module_scatter_by_size(
         return _short_label(name, max_chars=max_label_chars, short=short_labels)
 
     def size(genes):
-        return genes.astype(float) * 1.25 * point_scale
+        return _marker_area(genes, point_scale)
 
     panel = ax
     for key in keys:
@@ -958,7 +1184,8 @@ def plot_per_module_scatter_by_size(
 
         fig, ax, owns = _start(panel, figsize)
 
-        # Background: light grey circles with hairline borders.
+        # Background: white circles with a grey hairline, largest drawn first.
+        rest = rest.sort_values("n_used_genes", ascending=False)
         ax.scatter(
             rest.auc_score, rest.n_used_genes,
             facecolors=nonsig_color, edgecolors=nonsig_border_color,
@@ -973,7 +1200,7 @@ def plot_per_module_scatter_by_size(
             zorder=2
         )
 
-        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
         ax.set_xlabel(f"{_display_name(key)} AUPRC")
         ax.set_ylabel("Genes in module")
         ax.set_box_aspect(1)
@@ -982,21 +1209,19 @@ def plot_per_module_scatter_by_size(
         ax.grid(visible=False, which='both', axis='both')
         ax.set_xlim(0, 1.0)
         ax.set_ylim(0, sorted_pc.n_used_genes.max() * 1.05)
-        ax.set_xticks([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+        _unit_ticks(ax, "x")
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.spines['left'].set_position(('outward', spine_offset))
         ax.spines['bottom'].set_position(('outward', spine_offset))
-        if owns:
-            fig.tight_layout()
 
         if show_labels:
             label_points = [
-                (row.auc_score, row.n_used_genes, label_text(row.Name), row.n_used_genes * 1.25 * point_scale)
+                (row.auc_score, row.n_used_genes, label_text(row.Name), float(_marker_area(row.n_used_genes, point_scale)))
                 for _, row in top_labels.iterrows()
             ]
             obstacles = [
-                (row.auc_score, row.n_used_genes, row.n_used_genes * 1.25 * point_scale)
+                (row.auc_score, row.n_used_genes, float(_marker_area(row.n_used_genes, point_scale)))
                 for _, row in rest.iterrows()
             ]
 
@@ -1024,7 +1249,7 @@ def plot_module_contributions(
     num_module_to_show=10,
     y_lim=None,
     fig_title=None,
-    fig_labs=['Fraction of TP', 'Precision'],
+    fig_labs=('Fraction TP explained', 'Precision'),
     legend_rows=6,   # rows in the legend below the plot
     max_label_chars=18,
     title="Modules driving the global PR curve ({dataset})",
@@ -1097,8 +1322,9 @@ def plot_module_contributions(
         lower = max(0, min(y) - padding)
         upper = last_prec_value + padding
 
-        fig, ax, owns = _start(panel, (3.2, 2.2))
+        fig, ax, owns = _start(panel, (2.6, 1.8))
         ax.set_xlim(0, 1)
+        _unit_ticks(ax, "x")
         ax.set_ylim(lower, upper)
         ax.set_xlabel(fig_labs[0])
         ax.set_ylabel(fig_labs[1])
@@ -1147,18 +1373,21 @@ def plot_significant_modules(title="Modules recovered at each AUPRC threshold",
         score_col = "corrected_auc_score" if "corrected_auc_score" in module_data.columns else "auc_score"
         df[key] = [module_data.query(f'{score_col} >= {t}').shape[0] for t in thresholds]
 
-    fig, ax, owns = _start(ax, (3, 2.25))
+    # Square plot area like the other panels; each threshold group takes 60 %
+    # of its slot, so bars get thinner rather than the plot wider.
+    fig, ax, owns = _start(ax, CURVE_FIGSIZE)
+    ax.set_box_aspect(1)
     colors = _plot_dataset_colors(datasets, None, config, dload("input", "colors"))
 
-    bar_width = 0.8 / num_datasets
+    bar_width = 0.6 / num_datasets
     for i, dataset in enumerate(datasets):
         x = np.arange(len(thresholds)) + i * bar_width
         ax.bar(x, df[dataset], width=bar_width, color=colors[i], edgecolor='black', label=_display_name(dataset))
 
     ax.set_xticks(np.arange(len(thresholds)) + (num_datasets - 1) * bar_width / 2)
     ax.set_xticklabels([str(t) for t in thresholds], rotation=0, ha='center')
-    ax.set_xlabel("AUPRC thresholds")
-    ax.set_ylabel("Number of modules")
+    ax.set_xlabel("Per-module\nAUPRC threshold")
+    ax.set_ylabel(f"# {_unit_words()[1]}")
     _set_title(ax, title)
 
     # Nature style: no grid; open top/right spines
@@ -1168,8 +1397,6 @@ def plot_significant_modules(title="Modules recovered at each AUPRC threshold",
 
     _place_legend(ax)
     _caption(ax, caption)
-    if owns:
-        fig.tight_layout()
     _finish(fig, owns, config, "number_of_significant_modules")
     return df
 
@@ -1260,43 +1487,25 @@ def _plot_dataset_colors(dataset_names, colors, config, input_colors):
     ]
 
 
-_MODULE_TICKS = [1, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000]
+MODULE_AXIS_MAX = 200
+MODULE_AXIS_TICKS = (2, 20, 200)
 
 
-def _module_axis_scale(max_coverage):
-    """Log module-count axis ticked at 1, 5, 10, 20, 50, 100, 200, ...
+def _configure_module_axis(ax):
+    """Log module-count axis, always 1 to 200, labelled only at 2, 20 and 200.
 
-    The axis ends at the first tick above the largest module count. With more
-    than seven ticks only 1, 10, 100, ... and the end tick are kept so labels
-    do not collide in a narrow panel.
+    Curves that run past 200 modules are cut at the axis edge.
     """
-    x_max = next((t for t in _MODULE_TICKS if t >= max_coverage), _MODULE_TICKS[-1])
-    ticks = [t for t in _MODULE_TICKS if t <= x_max]
-    if len(ticks) > 7:
-        decades = [t for t in ticks if np.log10(t).is_integer()]
-        # drop a decade that sits too close (< 0.45 decade) to the end tick
-        ticks = [t for t in decades if np.log10(x_max / t) >= 0.45] + [x_max]
-    return x_max, ticks, [str(tick) for tick in ticks]
-
-
-def _coverage_max(values):
-    array = np.asarray(values, dtype=float)
-    return float(np.nanmax(array)) if array.size else 0.0
-
-
-def _configure_module_axis(ax, max_coverage):
-    x_max, ticks, labels = _module_axis_scale(max_coverage)
     ax.set_xscale("log")
-    ax.set_xlim(1, x_max)
-    ax.set_xlabel("Number of modules")
+    ax.set_xlim(1, MODULE_AXIS_MAX)
+    ax.set_xlabel(f"# {_unit_words()[1]} (TP)")
     ax.set_ylabel("Precision")
     ax.set_ylim(0.0, 1.05)
-    ax.set_xticks(ticks)
-    ax.set_xticklabels(labels)
+    _unit_ticks(ax, "y")
+    ax.set_xticks(MODULE_AXIS_TICKS, [str(t) for t in MODULE_AXIS_TICKS])
     ax.xaxis.set_minor_locator(NullLocator())
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    return x_max
 
 
 def _save_mpr_figure(fig, config, outname, default_stem):
@@ -1306,6 +1515,7 @@ def _save_mpr_figure(fig, config, outname, default_stem):
     if len(path.parts) == 1:
         path = Path(config["output_folder"]) / filename
     path.parent.mkdir(parents=True, exist_ok=True)
+    _wrap_axis_labels(fig)
     fig.savefig(path, bbox_inches="tight", format=output_type)
 
 
@@ -1357,7 +1567,7 @@ def plot_mpr_module_coverage_curve(
     save=True,
     outname=None,
     linewidth=1.0,
-    show_markers="auto",
+    show_markers=False,
     marker_size=6,
     title="Modules recovered at each precision (mPR)",
     caption="Number of modules with at least one true-positive pair above each precision cutoff.",
@@ -1377,16 +1587,12 @@ def plot_mpr_module_coverage_curve(
     ax.set_box_aspect(CURVE_BOX_ASPECT)
     _set_title(ax, title)
 
-    max_coverage = max(
-        (_coverage_max(data["coverage_curve"]) for data in stored.values()),
-        default=0.0,
-    )
-    x_max = _configure_module_axis(ax, max_coverage)
+    _configure_module_axis(ax)
     for i, name in enumerate(dataset_names):
         data = stored[name]
         cutoffs = np.asarray(data["precision_cutoffs"], dtype=float)
         coverage = np.asarray(data["coverage_curve"], dtype=float)
-        mask = (coverage > 0) & (coverage <= x_max)
+        mask = coverage > 0  # beyond x_max the line is clipped at the axis edge
         if not mask.any():
             continue
         x_values = coverage[mask]
@@ -1443,14 +1649,15 @@ FILTER_CAPTION = ("Left to right: all complexes; mitochondrial ribosome and ETC 
                   "removed; small complexes with high AUPRC removed.")
 
 
-def _filter_legend(axes, dataset_names, colors, linewidth):
-    """Dataset legend in an empty corner of the first panel, else right of the last one."""
+def _filter_legend(axes, host, dataset_names, colors, linewidth):
+    """Dataset legend in an empty corner of the first panel, else above the panels."""
     handles = [
         Line2D([0], [0], color=colors[i % len(colors)], linewidth=linewidth)
         for i in range(len(dataset_names))
     ]
+    # Fallback: above the row of panels, clear of the per-filter titles.
     return _place_legend(axes[0], handles, [_display_name(name) for name in dataset_names],
-                         outside_ax=axes[-1])
+                         above_ax=host, above_pad=2.4)
 
 
 @_publication_style
@@ -1461,7 +1668,7 @@ def plot_mpr_filter(
     save=True,
     outname=None,
     linewidth=1.0,
-    show_markers="auto",
+    show_markers=False,
     marker_size=6,
     title="Modules recovered under complex filters (mPR)",
     caption=FILTER_CAPTION,
@@ -1477,26 +1684,18 @@ def plot_mpr_filter(
         config,
         dload("input", "colors"),
     )
-    fig, host, owns = _start(ax, (6.6, 2.9))
+    fig, host, owns = _start(ax, (6.0, 2.0))
     axes = _filter_panels(host, title)
 
-    max_coverage = max(
-        (
-            _coverage_max(curve)
-            for data in stored.values()
-            for curve in data["coverage_curves"].values()
-        ),
-        default=0.0,
-    )
     auc_values = {}
     for ax, variant in zip(axes, FILTER_VARIANTS):
-        x_max = _configure_module_axis(ax, max_coverage)
+        _configure_module_axis(ax)
         for i, name in enumerate(dataset_names):
             data = stored[name]
             cutoffs = np.asarray(data["precision_cutoffs"], dtype=float)
             auc_values[name] = data["modules_auc"]
             coverage = np.asarray(data["coverage_curves"][variant], dtype=float)
-            mask = (coverage > 0) & (coverage <= x_max)
+            mask = coverage > 0  # beyond x_max the line is clipped at the axis edge
             if not mask.any():
                 continue
             x_values = coverage[mask]
@@ -1518,7 +1717,7 @@ def plot_mpr_filter(
             ax.set_ylabel("")
         if i != len(axes) // 2:
             ax.set_xlabel("")
-    _filter_legend(axes, dataset_names, colors, linewidth)
+    _filter_legend(axes, host, dataset_names, colors, linewidth)
     _caption(host, caption, below=axes)
     if save and owns:
         _save_mpr_figure(fig, config, outname, "mpr_filter_comparison")
@@ -1548,7 +1747,7 @@ def plot_globalpr_filter(
         config,
         dload("input", "colors"),
     )
-    fig, host, owns = _start(ax, (6.6, 2.9))
+    fig, host, owns = _start(ax, (6.0, 2.0))
     axes = _filter_panels(host, title)
 
     xmax = 0.0
@@ -1564,17 +1763,18 @@ def plot_globalpr_filter(
             ax.plot(tp[mask], precision[mask], color=colors[i], linewidth=linewidth)
 
     axes[0].set_ylabel("Precision")
-    axes[len(axes) // 2].set_xlabel("Number of true positives")
+    axes[len(axes) // 2].set_xlabel(_tp_axis_label())
     axes[0].set_ylim(0.0, 1.05)
+    for ax in axes:
+        _unit_ticks(ax, "y")
     if xmax > 0:
         for ax in axes:
-            ax.set_xscale("log")
-            ax.xaxis.set_minor_locator(NullLocator())
+            _setup_log_tp_axis(ax, True)
         x_min = 10 if xmax > 10 else 1
         _trim_pr_xaxis(axes, min_precision, x_min=x_min)
         for ax in axes[1:]:
             ax.set_xlim(axes[0].get_xlim())
-    _filter_legend(axes, dataset_names, colors, linewidth)
+    _filter_legend(axes, host, dataset_names, colors, linewidth)
     _caption(host, caption, below=axes)
     if save and owns:
         _save_mpr_figure(fig, config, outname, "globalpr_filter_comparison")
@@ -1587,7 +1787,7 @@ def plot_mpr_summary(
     colors=None,
     save=True,
     linewidth=1.0,
-    show_markers="auto",
+    show_markers=False,
     marker_size=6,
 ):
     """Plot unfiltered module-coverage mPR curves and their dataset AUCs."""
@@ -1644,8 +1844,8 @@ def plot_panels(
     ncols : int
         Panels per row.
     panel_size : (width, height)
-        Size of one cell in inches. 3.4 x 3.6 fits a square plot with its title,
-        caption and legend; two columns fit a double
+        Design size of one cell in inches, multiplied by ``figure_scale``.
+        3.4 x 3.6 fits a square plot with its legend; two columns fit a double
         journal column (~7 in).
     labels : str or list
         Panel letters, in order. Use ``""`` for none.
@@ -1682,7 +1882,7 @@ def plot_panels(
         slots.append((row, col, span))
         col += span
     nrows = max(1, (slots[-1][0] + 1) if slots else 1)
-    pw, ph = panel_size
+    pw, ph = panel_size[0] * _STYLE["scale"], panel_size[1] * _STYLE["scale"]
     letter_h = 0.15  # inches above each cell reserved for its letter
     fig = plt.figure(figsize=(pw * ncols, ph * nrows))
     dpi = fig.dpi
@@ -1714,12 +1914,15 @@ def plot_panels(
         func(ax=ax, **kwargs)
         placed.append((ax, cell, next(letters, "")))
 
-    # Tick labels change with axes size, so fit a few times until stable.
-    for _ in range(3):
+    # Tick labels change with axes size, so fit a few times until stable;
+    # long axis labels are split onto two lines once the sizes are known.
+    for attempt in range(4):
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
         for ax, cell, _ in placed:
             _fit_axes_in_cell(ax, cell, renderer)
+        if attempt == 1:
+            _wrap_axis_labels(fig)
     fig.canvas.draw()
 
     for ax, cell, letter in placed:

@@ -43,6 +43,9 @@ config = {
     "plotting": {
         "save_plot": True,
         "output_type": "pdf",
+        "figure_scale": 0.75,  # plot-area size; 0.75 = three panels across A4, 0.55 = four
+        "titles": False,       # default plot titles
+        "captions": False,     # small grey description under each plot
     },
 }
 

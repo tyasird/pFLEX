@@ -60,6 +60,13 @@ def initialize(config={}):
             "save_plot": True,
             "show_plot": True,
             "output_type": "pdf",
+            "dpi": 300,
+            # Figure size relative to the 3-inch design size; text stays 8 pt.
+            # 0.75 = three panels across A4; 0.55 = ~40 mm panels, four across A4.
+            "figure_scale": 0.75,
+            # Default titles and grey captions (passing title=/caption= shows them anyway).
+            "titles": False,
+            "captions": False,
         },
         "preprocessing": {
             "normalize": False,

@@ -31,6 +31,9 @@ default_config = {
     "plotting": {
         "save_plot": True,
         "output_type": "pdf",
+        "figure_scale": 0.75,  # plot-area size; 0.75 = three panels across A4, 0.55 = four
+        "titles": False,       # default plot titles
+        "captions": False,     # small grey description under each plot
     },
     "preprocessing": {
         "fill_na": True,
@@ -71,6 +74,16 @@ flex.plot_per_module_scatter(n_top=10)
 flex.plot_per_module_scatter_by_size(n_top=10)
 flex.plot_module_contributions()
 mpr_auc_by_dataset = flex.plot_mpr_summary()
+
+#%%
+# Combine plots into one lettered multi-panel figure (figure_panels.pdf).
+# Each entry is a plot function or (function, kwargs[, columns spanned]).
+flex.plot_panels([
+    flex.plot_precision_recall_curve,
+    flex.plot_auc_scores,
+    flex.plot_mpr_module_coverage_curve,
+    flex.plot_significant_modules,
+], ncols=2)
 
 #%%
 # Optional complex-filter sensitivity analysis. These calculations are kept
