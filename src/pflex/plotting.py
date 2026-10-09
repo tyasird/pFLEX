@@ -888,8 +888,8 @@ def plot_per_module_scatter(
     diagonal_color='0.6',
     size_legend=True,
     size_legend_genes=(5, 20, 100),
-    labels_per_dataset=4,
-    labels_in_both=2,
+    labels_per_dataset=None,
+    labels_in_both=None,
     title="Complex-level AUPRC comparison",
     caption="Colored and labelled: the {k} best modules specific to each dataset (of the "
             "top {n_top}); grey labelled: the {k_both} best in both. Circle area scales "
@@ -910,13 +910,14 @@ def plot_per_module_scatter(
     ----------
     n_top : int
         Modules ranked in the top ``n_top`` of a dataset are candidates.
-    labels_per_dataset : int
+    labels_per_dataset : int, optional
         Colour and label the best ``labels_per_dataset`` candidates that are
-        top in only that dataset (default 4 per dataset).
-    labels_in_both : int
+        top in only that dataset. Default 4, or 3 for small figures
+        (``figure_scale`` <= 0.6).
+    labels_in_both : int, optional
         Label (in grey) the best ``labels_in_both`` modules top in both
-        datasets, ranked by their mean AUPRC (default 2). Every coloured point
-        is labelled; all other modules are grey.
+        datasets, ranked by their mean AUPRC. Default 2, or 0 for small
+        figures. Every coloured point is labelled; all other modules are grey.
     n_labels : deprecated
         Ignored; use ``labels_per_dataset`` / ``labels_in_both``.
     short_labels : bool
@@ -946,6 +947,13 @@ def plot_per_module_scatter(
     input_colors = dload("input", "colors")
     input_colors = {_sanitize(k): v for k, v in input_colors.items()} if input_colors else {}
     label_map = label_map or {}
+    # Small figures (figure_scale <= 0.6, ~28 mm plot area) have room for fewer
+    # labels: 3 per dataset and none for modules top in both.
+    small = _STYLE["scale"] <= 0.6
+    if labels_per_dataset is None:
+        labels_per_dataset = 3 if small else 4
+    if labels_in_both is None:
+        labels_in_both = 0 if small else 2
     if n_labels is not None:
         log.warning(
             "plot_per_module_scatter: n_labels is ignored; use labels_per_dataset "
@@ -1084,7 +1092,10 @@ def plot_per_module_scatter(
             frame.set_linewidth(0.25)
             frame.set_facecolor("white")
             frame.set_boxstyle("round", pad=0.0, rounding_size=0.25)
-        _caption(ax, (caption or "").format(n_top=n_top, k=labels_per_dataset, k_both=labels_in_both),
+        text = caption or ""
+        if labels_in_both == 0:
+            text = text.replace("; grey labelled: the {k_both} best in both", "")
+        _caption(ax, text.format(n_top=n_top, k=labels_per_dataset, k_both=labels_in_both),
                  below=[ax] + ([legend] if legend else []))
 
 
