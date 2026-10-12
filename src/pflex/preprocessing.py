@@ -6,45 +6,13 @@ from tqdm import tqdm
 from .logging_config import log
 tqdm.pandas()
 # Locate package data path once at module level
-from importlib.metadata import distribution
 from importlib.resources import files
-import json
 from pathlib import Path
 
 
 def return_package_dir():
-    try:
-        # Get the distribution
-        dist = distribution('pflex')
-
-        # Check for direct_url.json
-        try:
-            direct_url_text = dist.read_text('direct_url.json')
-        except FileNotFoundError:
-            direct_url_text = None
-
-        if direct_url_text:
-            direct_url = json.loads(direct_url_text)
-            if direct_url.get('dir_info', {}).get('editable'):
-                # Editable install detected
-                project_url = direct_url['url']
-                # Remove 'file:///' prefix and handle Windows paths
-                project_root = project_url.removeprefix('file:///').replace('/', os.sep)
-                # Assuming src layout: project_root/src/pflex
-                package_dir = os.path.join(project_root, 'src', 'pflex')
-            else:
-                # Non-editable
-                package_dir = str(files('pflex'))
-        else:
-            # No direct_url, assume non-editable
-            package_dir = str(files('pflex'))
-            
-    except Exception: # PackageNotFoundError or other issues
-        # Fallback to local directory relative to this file
-        # precise location: src/pflex/preprocessing.py -> package dir is parent
-        package_dir = str(Path(__file__).parent)
-
-    return package_dir
+    """Folder of the installed pflex package (works for regular and editable installs)."""
+    return str(Path(__file__).resolve().parent)
 
 
 
