@@ -1,9 +1,9 @@
 # pFLEX
 
 ![PyPI](https://img.shields.io/badge/pypi-v1.1-orange)
-![Python](https://img.shields.io/badge/python-3.10-blue)
+![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Build](https://img.shields.io/badge/build-passing-brightgreen)
+[![Tests](https://github.com/tyasird/pFLEX/actions/workflows/tests.yml/badge.svg)](https://github.com/tyasird/pFLEX/actions/workflows/tests.yml)
 ![Build system](https://img.shields.io/badge/build-hatchling-blue)
 ![Lint](https://img.shields.io/badge/lint-ruff-46a2f1)
 ![CLI](https://img.shields.io/badge/CLI-pFLEX-brightgreen)
