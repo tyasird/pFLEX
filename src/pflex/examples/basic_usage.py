@@ -70,7 +70,7 @@ for name, dataset in data.items():
 flex.plot_precision_recall_curve()
 flex.plot_auc_scores()
 flex.plot_significant_modules()
-flex.plot_per_module_scatter(n_top=10)
+flex.plot_per_module_scatter()
 flex.plot_per_module_scatter_by_size(n_top=10)
 flex.plot_module_contributions()
 mpr_auc_by_dataset = flex.plot_mpr_summary()

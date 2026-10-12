@@ -865,10 +865,35 @@ def plot_all_runs_pra(pra_list, mean_df=None, line_width=1.0, hide_minor_ticks=T
     return ax
 
 
+def _select_scatter_modules(scores, highlight, n_per_dataset, n_shared):
+    """Pick the modules highlighted in :func:`plot_per_module_scatter`.
+
+    ``scores`` has one column per dataset (x, y). Returns the index of the
+    x-specific, y-specific and shared modules; no module is in two groups.
+    """
+    x, y = scores.columns
+    # Shared first: good in both datasets, ranked by the lower of the two.
+    shared = scores.min(axis=1).nlargest(n_shared).index
+    rest = scores.drop(index=shared)
+    if highlight == "delta":
+        diff = rest[x] - rest[y]
+        x_only = diff[diff > 0].nlargest(n_per_dataset).index
+        y_only = (-diff[diff < 0]).nlargest(n_per_dataset).index
+    else:
+        # A module among the best of both datasets goes to the one where it
+        # scores higher.
+        prefers_x = rest[x] >= rest[y]
+        x_only = rest.loc[prefers_x, x].nlargest(n_per_dataset).index
+        y_only = rest.loc[~prefers_x, y].nlargest(n_per_dataset).index
+    return x_only, y_only, shared
+
+
 @_publication_style
 def plot_per_module_scatter(
-    n_top=10,
-    n_labels=None,
+    highlight="delta",
+    n_per_dataset=None,
+    n_shared=None,
+    min_genes=3,
     sig_color='black',
     nonsig_color='white',
     label_color='black',
@@ -888,38 +913,46 @@ def plot_per_module_scatter(
     diagonal_color='0.6',
     size_legend=True,
     size_legend_genes=(5, 20, 100),
-    labels_per_dataset=None,
-    labels_in_both=None,
     title="Complex-level AUPRC comparison",
-    caption="Colored and labelled: the {k} best modules specific to each dataset (of the "
-            "top {n_top}); grey labelled: the {k_both} best in both. Circle area scales "
-            "with module size.",
+    caption=None,
     pair=None,
     ax=None,
+    n_top=None,
+    n_labels=None,
+    labels_per_dataset=None,
+    labels_in_both=None,
 ):
     """Compare per-module AUPRC between every pair of datasets.
 
-    Modules in the top ``n_top`` of either dataset are filled with that
-    dataset's colour (black when top in both); all others are drawn as light
-    grey circles. Circle area scales with the number of genes in the module.
+    Three groups of modules are coloured and labelled; all others are white
+    circles. Circle area scales with the number of genes in the module.
+
+    - Shared (grey labels): the ``n_shared`` modules that are good in both
+      datasets, i.e. with the highest min(AUPRC x, AUPRC y). Chosen first.
+    - Dataset-specific (dataset colour), ``n_per_dataset`` per dataset:
+
+      - ``highlight="delta"`` (default): the largest AUPRC difference, x - y
+        for the x dataset and y - x for the y dataset.
+      - ``highlight="rank"``: the highest AUPRC in that dataset.
+
+    Only modules with at least ``min_genes`` measured genes are highlighted;
+    with one or two gene pairs, AUPRC values are coarse and differences noisy.
 
     The defaults produce a final-size figure (3 x 3 in, 8 pt Arial, 0.25 pt
     borders, axes offset from the data) whose text stays editable in PDF/SVG.
 
     Parameters
     ----------
-    n_top : int
-        Modules ranked in the top ``n_top`` of a dataset are candidates.
-    labels_per_dataset : int, optional
-        Colour and label the best ``labels_per_dataset`` candidates that are
-        top in only that dataset. Default 4, or 3 for small figures
-        (``figure_scale`` <= 0.6).
-    labels_in_both : int, optional
-        Label (in grey) the best ``labels_in_both`` modules top in both
-        datasets, ranked by their mean AUPRC. Default 2, or 0 for small
-        figures. Every coloured point is labelled; all other modules are grey.
-    n_labels : deprecated
-        Ignored; use ``labels_per_dataset`` / ``labels_in_both``.
+    highlight : {"delta", "rank"}
+        How dataset-specific modules are chosen (see above).
+    n_per_dataset : int, optional
+        Modules coloured and labelled per dataset. Default 4, or 3 for small
+        figures (``figure_scale`` <= 0.6).
+    n_shared : int, optional
+        Modules good in both datasets, labelled in grey. Default 2, or 0 for
+        small figures.
+    min_genes : int
+        Minimum number of measured genes for a module to be highlighted.
     short_labels : bool
         Label with the first word of the module name ("FA core complex" ->
         "FA"); nearby modules with the same short name share one label.
@@ -941,23 +974,39 @@ def plot_per_module_scatter(
     ax : matplotlib Axes, optional
         Draw into this axes (e.g. a panel from :func:`plot_panels`) instead of
         a new figure; nothing is saved.
+    n_top, n_labels : deprecated
+        Ignored. The top-n candidate pool was removed in 1.6.
+    labels_per_dataset, labels_in_both : deprecated
+        Old names of ``n_per_dataset`` and ``n_shared``.
     """
     config = dload("config")
     rdict = dload("pra_per_module")
     input_colors = dload("input", "colors")
     input_colors = {_sanitize(k): v for k, v in input_colors.items()} if input_colors else {}
     label_map = label_map or {}
+    if labels_per_dataset is not None:
+        log.warning("plot_per_module_scatter: labels_per_dataset is deprecated; use n_per_dataset.")
+        n_per_dataset = labels_per_dataset if n_per_dataset is None else n_per_dataset
+    if labels_in_both is not None:
+        log.warning("plot_per_module_scatter: labels_in_both is deprecated; use n_shared.")
+        n_shared = labels_in_both if n_shared is None else n_shared
+    if n_top is not None or n_labels is not None:
+        log.warning("plot_per_module_scatter: n_top and n_labels are ignored since pFLEX 1.6.")
     # Small figures (figure_scale <= 0.6, ~28 mm plot area) have room for fewer
-    # labels: 3 per dataset and none for modules top in both.
+    # labels: 3 per dataset and none shared.
     small = _STYLE["scale"] <= 0.6
-    if labels_per_dataset is None:
-        labels_per_dataset = 3 if small else 4
-    if labels_in_both is None:
-        labels_in_both = 0 if small else 2
-    if n_labels is not None:
-        log.warning(
-            "plot_per_module_scatter: n_labels is ignored; use labels_per_dataset "
-            "and labels_in_both."
+    if n_per_dataset is None:
+        n_per_dataset = 3 if small else 4
+    if n_shared is None:
+        n_shared = 0 if small else 2
+    if highlight not in ("delta", "rank"):
+        raise ValueError("highlight must be 'delta' or 'rank'")
+    if caption is None:
+        caption = (
+            "Coloured: the {k} modules per dataset with the "
+            + ("largest AUPRC difference" if highlight == "delta" else "highest AUPRC")
+            + "; grey labelled: the {k_both} modules good in both. "
+            "Circle area scales with module size."
         )
 
     if len(rdict) < 2:
@@ -991,21 +1040,9 @@ def plot_per_module_scatter(
 
     panel = ax
     for pair in column_pairs:
-        extreme_indices_0 = df[pair[0]].sort_values(ascending=False).head(n_top).index
-        extreme_indices_1 = df[pair[1]].sort_values(ascending=False).head(n_top).index
-        top_in_both = extreme_indices_0.intersection(extreme_indices_1)
-        # Only the best few per group are coloured and labelled; the rest stay grey.
-        significant_pair0_only = (
-            df.loc[extreme_indices_0.difference(extreme_indices_1), pair[0]]
-            .sort_values(ascending=False).head(labels_per_dataset).index
-        )
-        significant_pair1_only = (
-            df.loc[extreme_indices_1.difference(extreme_indices_0), pair[1]]
-            .sort_values(ascending=False).head(labels_per_dataset).index
-        )
-        significant_in_both = (
-            df.loc[top_in_both, [pair[0], pair[1]]].mean(axis=1)
-            .sort_values(ascending=False).head(labels_in_both).index
+        scores = df[[pair[0], pair[1]]][n_genes >= min_genes].dropna()
+        significant_pair0_only, significant_pair1_only, significant_in_both = (
+            _select_scatter_modules(scores, highlight, n_per_dataset, n_shared)
         )
         significant_indices = significant_pair0_only.union(significant_pair1_only).union(significant_in_both)
 
@@ -1093,9 +1130,9 @@ def plot_per_module_scatter(
             frame.set_facecolor("white")
             frame.set_boxstyle("round", pad=0.0, rounding_size=0.25)
         text = caption or ""
-        if labels_in_both == 0:
-            text = text.replace("; grey labelled: the {k_both} best in both", "")
-        _caption(ax, text.format(n_top=n_top, k=labels_per_dataset, k_both=labels_in_both),
+        if n_shared == 0:
+            text = text.replace("; grey labelled: the {k_both} modules good in both", "")
+        _caption(ax, text.format(k=n_per_dataset, k_both=n_shared),
                  below=[ax] + ([legend] if legend else []))
 
 
@@ -1871,7 +1908,7 @@ def plot_panels(
     -------
     >>> flex.plot_panels([
     ...     flex.plot_precision_recall_curve,
-    ...     (flex.plot_per_module_scatter, {"n_top": 10}),
+    ...     (flex.plot_per_module_scatter, {"highlight": "delta"}),
     ...     flex.plot_auc_scores,
     ...     flex.plot_mpr_module_coverage_curve,
     ...     (flex.plot_globalpr_filter, {}, 2),

@@ -102,7 +102,8 @@ def test_two_networks_and_plots(config):
 
     flex.plot_precision_recall_curve()
     flex.plot_auc_scores()
-    flex.plot_per_module_scatter(n_top=2)
+    flex.plot_per_module_scatter(min_genes=1)
+    flex.plot_per_module_scatter(highlight="rank", n_per_dataset=2, n_shared=1)
     flex.plot_module_contributions()
     flex.plot_mpr_summary()
     flex.save_results_to_csv()
