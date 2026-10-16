@@ -1,0 +1,21 @@
+{
+  "title": "pflex",
+  "upload_type": "software",
+  "version": "1.7.0",
+  "publication_date": "2026-10-16",
+  "description": "pflex is a benchmarking toolkit for evaluating CRISPR screen results against biological functional standards. The toolkit computes gene-level and module-level performance metrics, helping researchers systematically assess the biological relevance and resolution of their CRISPR screening data.",
+  "creators": [
+    { "name": "Demirtas, Yasir" },
+    { "name": "Billmann, Maximilian" }
+  ],
+  "license": "MIT",
+  "access_right": "open",
+  "keywords": ["CRISPR screens", "benchmarking", "functional genomics", "bioinformatics"],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/tyasird/pFLEX/tree/v1.7.0",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
