@@ -1,6 +1,7 @@
 # pFLEX
 
 ![PyPI](https://img.shields.io/badge/pypi-v1.1-orange)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20632867.svg)](https://doi.org/10.5281/zenodo.20632867)
 ![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 [![Tests](https://github.com/tyasird/pFLEX/actions/workflows/tests.yml/badge.svg)](https://github.com/tyasird/pFLEX/actions/workflows/tests.yml)
