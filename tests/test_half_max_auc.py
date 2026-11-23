@@ -102,13 +102,51 @@ def test_random_level_ranking_scores_zero():
     assert res["score"] == pytest.approx(0.0, abs=1e-9)
 
 
-def test_crossing_is_first_fall_even_if_curve_recovers():
-    # Drops below threshold at k=3, then recovers to 20/27 > threshold.
+def test_first_crossing_ignores_a_recovery():
+    # crossing="first" (pFLEX 2.0): drops below at k=3, recovery to 20/27 is ignored.
     ranks = [1, 2, 10] + list(range(11, 28))
-    res = half_max_auc(labels_from_ranks(ranks, 100), k0=1, max_window=1)
+    res = half_max_auc(labels_from_ranks(ranks, 100), k0=1, max_window=1, crossing="first")
 
     assert res["p_threshold"] == pytest.approx(0.6)
     assert 2 < res["k_cross"] < 3
+
+
+def test_last_crossing_takes_the_largest_tp_above_threshold():
+    # Same ranking: falls below at k=3 (3/10), recovers to 20/27; never falls below again.
+    ranks = [1, 2, 10] + list(range(11, 28))
+    res = half_max_auc(labels_from_ranks(ranks, 100), k0=1, crossing="last")
+
+    assert res["p_threshold"] == pytest.approx(0.6)
+    assert res["k_cross"] == 20  # still above at the last TP
+    assert res["crossing"] == "last"
+
+
+def test_last_crossing_curve_that_starts_low_is_not_cut_at_its_start():
+    # p: 1/5, 2/6, 3/7, 4/8, 5/9, ... rises above 0.5, then falls below for good.
+    ranks = list(range(5, 45)) + [45 + 10 * i for i in range(1, 40)]
+    labels = labels_from_ranks(ranks, 2000)
+    k = np.arange(1, len(ranks) + 1)
+    p = k / np.array(ranks)
+    j = int(np.flatnonzero(p >= 0.5)[-1])  # last TP at or above
+    expected = k[j] + (p[j] - 0.5) / (p[j] - p[j + 1])
+
+    first = half_max_auc(labels, threshold=0.5, k0=1, crossing="first")
+    last = half_max_auc(labels, threshold=0.5, k0=1)  # default: last crossing
+
+    assert first["k_cross"] == 1  # starts below: the first-crossing rule cuts at TP 1
+    assert last["k_cross"] == pytest.approx(expected)
+    assert last["k_cross"] > 30
+
+
+def test_last_crossing_never_above_is_first_tp():
+    res = half_max_auc(labels_from_ranks(range(10, 1001, 10), 1000), threshold=0.5)
+
+    assert res["k_cross"] == 10  # the first TP searched (k0=10)
+
+
+def test_invalid_crossing():
+    with pytest.raises(ValueError):
+        half_max_auc(labels_from_ranks([1, 2, 10], 100), crossing="middle")
 
 
 def test_max_starts_at_k0():
@@ -132,14 +170,17 @@ def test_max_ignores_a_single_spike():
     assert res["k_max"] == 10
 
 
-def test_defaults_plain_max_from_first_tp():
-    # Precision 1 at TP 1-9 (ranks 1-9), lower afterwards: default max comes from TP 1.
+def test_defaults_max_from_tenth_tp_and_last_crossing():
+    # Precision 1 at TP 1-9 (ranks 1-9), lower afterwards: the default max skips them.
     ranks = list(range(1, 10)) + [12] + [12 + 8 * (k - 10) for k in range(11, 40)]
-    res = half_max_auc(labels_from_ranks(ranks, 1000))
+    labels = labels_from_ranks(ranks, 1000)
+    res = half_max_auc(labels)
 
-    assert res["k0"] == 1 and res["max_window"] == 1
-    assert res["p_max"] == 1.0
-    assert res["k_max"] == 1
+    assert res["k0"] == 10 and res["max_window"] == 1 and res["crossing"] == "last"
+    assert res["p_max"] == pytest.approx(10 / 12)
+    assert res["k_max"] == 10
+    # k0=1 (pFLEX 2.0): the lucky head sets the max.
+    assert half_max_auc(labels, k0=1)["p_max"] == 1.0
 
 
 def test_high_head_beats_long_mediocre_tail():
@@ -169,11 +210,11 @@ def test_dominated_curve_never_scores_higher():
 def test_curve_below_threshold_from_start():
     flat = labels_from_ranks(curve_from_precision(lambda k: 0.3), 100_000)
 
-    own = half_max_auc(flat, threshold=0.5)
-    from_10 = half_max_auc(flat, threshold=0.5, k0=10)
+    own = half_max_auc(flat, threshold=0.5, k0=1)
+    from_10 = half_max_auc(flat, threshold=0.5)  # default k0=10
     shared = half_max_auc(flat, threshold=0.5, k_end=500)
 
-    # Crossing at the first TP searched: TP 1 by default (no window of its own), TP 10 with k0=10.
+    # Never above: crossing at the first TP searched, TP 1 with k0=1 (no window of its own), TP 10 by default.
     assert own["k_cross"] == 1 and math.isnan(own["score"]) and own["reason"]
     assert from_10["k_cross"] == from_10["k_cut"] == 10
     assert np.isfinite(from_10["score"])
@@ -297,6 +338,35 @@ def test_half_max_auc_bar_plot(config):
     assert scores["Network_A"] == flex.dload("half_max_auc", "Network_A")["score"]
 
 
+def test_bar_plot_unsorted_keeps_dataset_order(config):
+    # Weaker network first by name: sorted bars would put it second.
+    inputs = {
+        "SVD_10": {"path": make_dataset(seed=5, signal=0.3), "sort": "high"},
+        "SVD_2": {"path": make_dataset(seed=0), "sort": "high"},
+    }
+    run_pipeline(config, inputs)
+
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots()
+    flex.plot_half_max_auc_scores(sort=False, crossing="last", ax=ax)
+    names = [t.get_text() for t in ax.get_xticklabels()]
+    plt.close(fig)
+
+    assert names == ["SVD_2", "SVD_10"]  # natural order, not by score
+
+
+def test_explainer_with_last_crossing(config):
+    inputs = {
+        "clean": {"path": make_dataset(seed=0), "sort": "high"},
+        "noisy": {"path": make_dataset(seed=5, signal=0.3), "sort": "high"},
+    }
+    run_pipeline(config, inputs)
+
+    res = flex.plot_half_max_explainer(k0=10, crossing="last", sort=False)
+
+    assert all(r["crossing"] == "last" and r["k0"] == 10 for r in res.values())
+
+
 def test_fraction_in_scores_and_plots(config):
     inputs = {
         "clean": {"path": make_dataset(seed=0), "sort": "high"},
@@ -326,8 +396,8 @@ def test_max_rank_takes_nth_highest_precision():
     k = np.arange(1, 201)
     p = k / (np.array(ranks) + 0)
 
-    plain = half_max_auc(labels)
-    third = half_max_auc(labels, max_rank=3)
+    plain = half_max_auc(labels, k0=1)
+    third = half_max_auc(labels, k0=1, max_rank=3)
 
     assert plain["p_max"] == 1.0
     assert third["p_max"] == pytest.approx(np.sort(p)[-3])
