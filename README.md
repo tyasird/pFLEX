@@ -19,6 +19,7 @@ Genetic networks derived from omics data are a powerful tool for systematic gene
 - Precision-recall curve generation for ranked gene lists
 - Evaluation using CORUM-derived modules, GO terms, and pathways
 - Module-level resolution analysis and visualization
+- Half-max AUC: an early-precision score next to the standard AUPRC
 - Easy integration into CRISPR screen workflows
 - Packaged DepMap example inputs filtered to CORUM genes
 
@@ -194,6 +195,52 @@ The calculation and plotting calls are intentionally separate. Calling a
 filter plotting function before its matching calculation raises an error that
 identifies the required preparation function.
 
+### Global AUPRC and half-max AUC
+
+**1. Standard AUPRC.** `pra()` computes the area under the global
+precision-recall curve for each dataset, as before:
+
+```python
+flex.plot_precision_recall_curve()   # PR curves
+flex.plot_auc_scores()               # one AUPRC bar per dataset
+```
+
+**2. Half-max AUC (early precision).** AUPRC is dominated by the long tail of
+low-precision pairs, so a dataset with a better top of the ranking can still
+get a lower AUPRC. The half-max AUC looks only at the top of the curves, after
+`pra()` has been run for all datasets:
+
+```python
+flex.plot_precision_recall_curve(half_max=True)   # adds the threshold and the window end
+flex.plot_half_max_auc_scores()                   # one half-max AUC bar per dataset
+scores = flex.half_max_auc_scores()               # {dataset: {"score": ..., ...}}
+flex.plot_half_max_explainer()                    # step-by-step figure: formula + results table
+```
+
+How it works:
+
+- **Threshold** = background + ½ × (max precision − background), the same for
+  all datasets. Background is the precision of a random ranking (true pairs /
+  all pairs).
+- **Window**: from the first TP to the latest TP where any dataset falls below
+  the threshold, the same for all datasets.
+- **Score**: the average precision in that window, scaled so a random ranking
+  is 0 and a perfect one is 1.
+
+`plot_half_max_explainer()` draws this calculation step by step for your
+datasets (on the linear TP axis the score uses), with the formula and a
+results table under the plot; useful for sharing.
+
+Options (on `half_max_auc_scores`, `plot_half_max_auc_scores` and
+`plot_half_max_explainer`):
+
+- `fraction="three_quarter"` or `"quarter"`: threshold at 3/4 or 1/4 instead of 1/2.
+- `max_rank=3`: use the 3rd highest precision instead of the max, so one or two
+  lucky first pairs cannot set the threshold.
+
+The full definition and all parameters are in
+[docs/half-max-auc-spec.md](docs/half-max-auc-spec.md).
+
 See the [User Guide](https://tyasird.github.io/pFLEX/user-guide/) for a detailed explanation of every input field, configuration key, function, return value, and output.
 
 ---
@@ -234,8 +281,14 @@ for name, dataset in data.items():
     corr = flex.perform_corr(dataset, config["corr_function"])
     flex.pra(name, corr, is_corr=True)
 
+# Standard AUPRC
 flex.plot_precision_recall_curve()
 flex.plot_auc_scores()
+
+# Half-max AUC (early precision, 1/2 max threshold)
+flex.plot_precision_recall_curve(half_max=True)
+flex.plot_half_max_auc_scores()
+flex.plot_half_max_explainer()
 ```
 
 For a runnable full workflow, see [src/pflex/examples/basic_usage.py](src/pflex/examples/basic_usage.py).
