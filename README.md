@@ -220,10 +220,11 @@ flex.plot_half_max_explainer()                    # step-by-step figure: formula
 How it works:
 
 - **Threshold** = background + ½ × (max precision − background), the same for
-  all datasets. Background is the precision of a random ranking (true pairs /
-  all pairs).
-- **Window**: from the first TP to the latest TP where any dataset falls below
-  the threshold, the same for all datasets.
+  all datasets. The max is searched from the 10th TP, so one or two lucky first
+  pairs cannot set it. Background is the precision of a random ranking (true
+  pairs / all pairs).
+- **Window**: from the first TP to the largest TP where any dataset is still
+  at or above the threshold, the same for all datasets.
 - **Score**: the average precision in that window, scaled so a random ranking
   is 0 and a perfect one is 1.
 
@@ -235,8 +236,11 @@ Options (on `half_max_auc_scores`, `plot_half_max_auc_scores` and
 `plot_half_max_explainer`):
 
 - `fraction="three_quarter"` or `"quarter"`: threshold at 3/4 or 1/4 instead of 1/2.
-- `max_rank=3`: use the 3rd highest precision instead of the max, so one or two
-  lucky first pairs cannot set the threshold.
+- `max_rank=3`: use the 3rd highest precision instead of the max.
+- `k0=1`, `crossing="first"`: the pFLEX 2.0 definition (max from the first TP;
+  window end where a curve first falls below the threshold).
+- `sort=True` (bar plot and explainer table): order by score instead of
+  dataset order.
 
 The full definition and all parameters are in
 [docs/half-max-auc-spec.md](docs/half-max-auc-spec.md).

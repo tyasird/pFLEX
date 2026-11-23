@@ -444,11 +444,30 @@ def _sustained_max(precision, window, rank=1):
     return value, i
 
 
-def _threshold_crossing(k, precision, threshold):
-    """TP where precision first falls below ``threshold``, interpolated linearly in TP.
+CROSSINGS = ("first", "last")
 
-    ``k[0]`` if it starts below, ``k[-1]`` if it never falls below.
+
+def _threshold_crossing(k, precision, threshold, crossing="last"):
+    """TP where precision falls below ``threshold``, interpolated linearly in TP.
+
+    ``crossing="last"`` (default): the largest TP still at or above the
+    threshold (where it falls below for the last time), so a curve that starts
+    below the threshold and rises above it later is not cut at its start;
+    ``k[0]`` if it is never at or above, ``k[-1]`` if it ends at or above.
+    ``crossing="first"`` (pFLEX 2.0): the first TP where it falls below; ``k[0]``
+    if it starts below, ``k[-1]`` if it never falls below.
     """
+    if crossing not in CROSSINGS:
+        raise ValueError(f"crossing must be one of {CROSSINGS}")
+    if crossing == "last":
+        above = np.flatnonzero(precision >= threshold)
+        if above.size == 0:
+            return float(k[0])
+        j = int(above[-1])
+        if j == len(k) - 1:
+            return float(k[-1])
+        frac = (precision[j] - threshold) / (precision[j] - precision[j + 1])
+        return float(k[j] + frac * (k[j + 1] - k[j]))
     below = np.flatnonzero(precision < threshold)
     if below.size == 0:
         return float(k[-1])
@@ -495,26 +514,29 @@ def threshold_name(fraction):
     return f"{f:g}"
 
 
-def half_max_auc(prediction, k0=1, threshold=None, k_end=None, max_window=1, fraction=0.5,
-                 max_rank=1):
+def half_max_auc(prediction, k0=10, threshold=None, k_end=None, max_window=1, fraction=0.5,
+                 max_rank=1, crossing="last"):
     """Half-max AUC of one ranked label vector.
 
     ``prediction`` is the binary label vector in rank order. One curve point
     per true positive: the k-th TP found at rank r has precision k / r.
 
     - Max: the highest precision from the ``k0``-th TP on. Defaults use the
-      plain max from the first TP (``k0=1``, ``max_window=1``, ``max_rank=1``).
+      plain max from the 10th TP (``k0=10``, ``max_window=1``, ``max_rank=1``),
+      where the log plot starts: the first few TPs are noisy (one or two lucky
+      hits give precision 1). ``k0=1`` searches from the first TP (pFLEX 2.0).
       Options: ``max_rank=3`` takes the 3rd highest precision instead, so one
       or two lucky hits cannot set it (1, 1, 1, ... still gives 1);
       ``max_window=3`` takes the highest precision held for 3 consecutive TPs
-      (a single early hit cannot set it); ``k0=10`` starts the search for the
-      max and the crossing at the 10th TP, where the log plot starts.
+      (a single early hit cannot set it).
     - ``threshold``: background (P / N) + ``fraction`` of the distance from
       background to the max. ``fraction`` 1/2 (default, half max), 3/4 or 1/4
       (also "half", "three_quarter", "quarter"). Normally passed in, shared by
       all datasets (``half_max_auc_scores``).
-    - ``k_cross``: the first TP from ``k0`` on where precision falls below the
-      threshold.
+    - ``k_cross``: the largest TP from ``k0`` on where precision is still at or
+      above the threshold (``crossing="last"``, default), or the first TP where
+      it falls below (``crossing="first"``, pFLEX 2.0; a curve that starts below
+      the threshold is then cut at its start, even if it rises above later).
     - Window: the linear TP axis from the **first** TP to ``k_end`` (always
       from TP 1, whatever ``k0`` is). ``k_end`` is normally
       passed in, the same for all datasets (the largest ``k_cross``);
@@ -530,12 +552,14 @@ def half_max_auc(prediction, k0=1, threshold=None, k_end=None, max_window=1, fra
     See docs/half-max-auc-spec.md.
     """
     f = _threshold_fraction(fraction)
+    if crossing not in CROSSINGS:
+        raise ValueError(f"crossing must be one of {CROSSINGS}")
     k_all, p_all, p_bg, n_tp, n_pairs = _tp_precision(prediction, 1)
     res = {"score": np.nan, "mean_precision": np.nan, "area": np.nan,
            "p_max": np.nan, "k_max": np.nan, "p_bg": p_bg, "fraction": f,
            "p_threshold": np.nan, "k_cross": np.nan, "k_cut": np.nan,
            "n_tp": n_tp, "n_pairs": n_pairs, "k0": k0, "max_window": max_window, "max_rank": max_rank,
-           "reason": ""}
+           "crossing": crossing, "reason": ""}
     if k_all is None or n_tp < k0:
         res["reason"] = f"fewer than {k0} true positives"
         return res
@@ -549,7 +573,7 @@ def half_max_auc(prediction, k0=1, threshold=None, k_end=None, max_window=1, fra
             return res
         threshold = p_bg + f * (p_max - p_bg)
     res["p_threshold"] = float(threshold)
-    res["k_cross"] = _threshold_crossing(k, precision, threshold)
+    res["k_cross"] = _threshold_crossing(k, precision, threshold, crossing)
 
     if k_end is None:
         k_end = res["k_cross"]
@@ -568,16 +592,18 @@ def half_max_auc(prediction, k0=1, threshold=None, k_end=None, max_window=1, fra
     return res
 
 
-def half_max_auc_scores(fraction=0.5, k0=1, max_window=1, max_rank=1):
+def half_max_auc_scores(fraction=0.5, k0=10, max_window=1, max_rank=1, crossing="last"):
     """Half-max AUC of every dataset with global PRA results, on one shared window.
 
     1. Threshold: from the dataset with the highest precision (from the
-       ``k0``-th TP on, default the first; held for ``max_window`` consecutive
+       ``k0``-th TP on, default the 10th; held for ``max_window`` consecutive
        TPs, default 1; or its ``max_rank``-th highest value, default 1 = plain max): its
        background (P / N) + ``fraction`` of the distance from background to
        that max. ``fraction`` 1/2 (default), 3/4 or 1/4 ("half",
        "three_quarter", "quarter").
-    2. Each dataset's ``k_cross``: where its precision first falls below it.
+    2. Each dataset's ``k_cross``: the largest TP still at or above it
+       (``crossing="last"``, default), or where its precision first falls
+       below it (``crossing="first"``, pFLEX 2.0).
     3. Window: TP 1 to the largest ``k_cross``, the same for every dataset.
     4. Score: plain average precision over the window (linear TP axis, every
        TP the same weight), measured from the background.
@@ -609,7 +635,7 @@ def half_max_auc_scores(fraction=0.5, k0=1, max_window=1, max_rank=1):
     if threshold is not None:
         for name, pred in predictions.items():
             k_cross = half_max_auc(pred, k0, threshold=threshold, max_window=max_window, max_rank=max_rank,
-                                   fraction=f)["k_cross"]
+                                   fraction=f, crossing=crossing)["k_cross"]
             if np.isfinite(k_cross):
                 crossings[name] = k_cross
     k_end = cut_from = None
@@ -620,13 +646,14 @@ def half_max_auc_scores(fraction=0.5, k0=1, max_window=1, max_rank=1):
     results = {}
     for name, pred in predictions.items():
         if k_end is None:
-            res = half_max_auc(pred, k0, max_window=max_window, fraction=f, max_rank=max_rank)
+            res = half_max_auc(pred, k0, max_window=max_window, fraction=f, max_rank=max_rank,
+                               crossing=crossing)
             res.update(score=np.nan, mean_precision=np.nan, area=np.nan,
                        p_threshold=np.nan, k_cross=np.nan, k_cut=np.nan,
                        reason=res["reason"] or "no dataset above background")
         else:
             res = half_max_auc(pred, k0, threshold=threshold, k_end=k_end,
-                               max_window=max_window, fraction=f, max_rank=max_rank)
+                               max_window=max_window, fraction=f, max_rank=max_rank, crossing=crossing)
         res.update(threshold_from=ref, cut_from=cut_from)
         results[name] = res
         dsave(res, "half_max_auc", name)

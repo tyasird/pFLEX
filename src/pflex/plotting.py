@@ -773,7 +773,7 @@ def _global_prevalence(pra):
 
 
 def _draw_half_max(ax, pra, hm, color, line_width):
-    """Dot where one dataset's precision first falls below the shared threshold.
+    """Dot where one dataset's precision falls below the shared threshold (its ``k_cross``).
 
     No shaded area: this plot has a log TP axis, while the score averages
     precision over the linear TP axis, so an area drawn here would not be the
@@ -817,7 +817,8 @@ def plot_precision_recall_curve(line_width=1.0, hide_minor_ticks=True, min_preci
                                 caption="Gene pairs ranked by score; a true positive is a pair "
                                         "sharing a module in {standard}.",
                                 global_prevalence=False, half_max=False, half_max_fraction=0.5,
-                                half_max_k0=1, half_max_window=1, half_max_rank=1, ax=None):
+                                half_max_k0=10, half_max_window=1, half_max_rank=1,
+                                half_max_crossing="last", ax=None):
     """Global PR curve of every dataset.
 
     ``global_prevalence=True`` adds a black dashed line at the fraction of all
@@ -830,13 +831,14 @@ def plot_precision_recall_curve(line_width=1.0, hide_minor_ticks=True, min_preci
     crossing) as a grey dotted line. No area is shaded: the x axis here is
     log-scaled for reading, while the score averages precision over the
     linear TP axis (see ``half_max_auc_scores``, ``plot_half_max_explainer``).
-    ``half_max_k0``, ``half_max_window`` and ``half_max_rank`` are its ``k0``,
-    ``max_window`` and ``max_rank``.
+    ``half_max_k0``, ``half_max_window``, ``half_max_rank`` and
+    ``half_max_crossing`` are its ``k0``, ``max_window``, ``max_rank`` and ``crossing``.
     """
     pra = dload("pra")
     config = dload("config")
     hm_all = (half_max_auc_scores(fraction=half_max_fraction, k0=half_max_k0,
-                                  max_window=half_max_window, max_rank=half_max_rank)
+                                  max_window=half_max_window, max_rank=half_max_rank,
+                                  crossing=half_max_crossing)
               if half_max else None)
     fig, ax, owns = _start(ax, CURVE_FIGSIZE)
     _setup_log_tp_axis(ax, hide_minor_ticks)
@@ -1620,24 +1622,31 @@ def plot_auc_scores(title="Area under the global PR curve per dataset",
 
 
 @_publication_style
-def plot_half_max_auc_scores(fraction=0.5, k0=1, max_window=1, max_rank=1, title=None,
+def plot_half_max_auc_scores(fraction=0.5, k0=10, max_window=1, max_rank=1, crossing="last",
+                             sort=False, title=None,
                              caption="Mean precision of the TPs from the first TP to the shared cut "
                                      "(linear TP axis), scaled so background is 0 and perfect is 1.",
                              ax=None):
     """One bar per dataset with the half-max AUC (see ``half_max_auc_scores``).
 
     ``fraction`` sets the threshold: 1/2 (half max, default), 3/4 or 1/4 of
-    the distance from background to the max. ``k0``, ``max_window`` and ``max_rank`` as in
-    ``half_max_auc_scores``. Saved as ``half_max_auc_values``
+    the distance from background to the max. ``k0``, ``max_window``, ``max_rank`` and
+    ``crossing`` as in ``half_max_auc_scores``. ``sort=False`` (default) keeps the
+    dataset order (SVD_2 before SVD_10); ``sort=True`` orders the bars by score.
+    Saved as ``half_max_auc_values``
     (``three_quarter_max_auc_values``, ``quarter_max_auc_values``).
     """
     config = dload("config")
     name = threshold_name(fraction)
     f_word, _ = _fraction_text(fraction)
-    hm_all = half_max_auc_scores(fraction=fraction, k0=k0, max_window=max_window, max_rank=max_rank)
+    hm_all = half_max_auc_scores(fraction=fraction, k0=k0, max_window=max_window, max_rank=max_rank,
+                                 crossing=crossing)
     scores = {d: hm["score"] for d, hm in hm_all.items()}
 
-    datasets = sorted(scores, key=lambda d: np.nan_to_num(scores[d], nan=-np.inf), reverse=True)
+    if sort:
+        datasets = sorted(scores, key=lambda d: np.nan_to_num(scores[d], nan=-np.inf), reverse=True)
+    else:
+        datasets = sorted(scores, key=_natural_key)
     colors = _plot_dataset_colors(datasets, None, config, dload("input", "colors"))
 
     fig, ax, owns = _start(ax, _bar_figsize(len(datasets)))
@@ -1665,8 +1674,8 @@ def _fraction_text(fraction):
     return _FRACTION_TEXT.get(name, (name, name))
 
 
-def plot_half_max_explainer(dataset_names=None, fraction=0.5, title=None, k0=1, max_window=1, max_rank=1,
-                            filename=None):
+def plot_half_max_explainer(dataset_names=None, fraction=0.5, title=None, k0=10, max_window=1, max_rank=1,
+                            filename=None, crossing="last", sort=False):
     """Step-by-step explanation figure of the half-max AUC, for sharing.
 
     Optional; nothing else depends on it. Uses the cached global PRA results
@@ -1680,7 +1689,9 @@ def plot_half_max_explainer(dataset_names=None, fraction=0.5, title=None, k0=1, 
     crossing, mean precision, score and AUPRC.
 
     ``dataset_names`` limits and orders the datasets (the threshold and K are
-    still computed from all of them). Saved as ``filename`` (default
+    still computed from all of them). ``crossing`` as in ``half_max_auc_scores``.
+    ``sort=False`` (default) keeps the dataset order in the table; ``sort=True``
+    orders it by score. Saved as ``filename`` (default
     ``half_max_explainer``, ``three_quarter_max_explainer``,
     ``quarter_max_explainer``) in the output folder when
     ``plotting.save_plot`` is on. Returns the half-max results.
@@ -1692,7 +1703,8 @@ def plot_half_max_explainer(dataset_names=None, fraction=0.5, title=None, k0=1, 
     fname = threshold_name(f)
     f_word, f_text = _fraction_text(f)
     filename = filename or f"{fname}_max_explainer"
-    results = half_max_auc_scores(fraction=f, k0=k0, max_window=max_window, max_rank=max_rank)
+    results = half_max_auc_scores(fraction=f, k0=k0, max_window=max_window, max_rank=max_rank,
+                                  crossing=crossing)
     # Natural order (SVD_2 before SVD_10) unless the caller gives one.
     # Names as written by the user ("Soft Tissue") or as stored ("Soft_Tissue").
     wanted = [_sanitize(n) for n in dataset_names] if dataset_names else sorted(results, key=_natural_key)
@@ -1781,13 +1793,20 @@ def plot_half_max_explainer(dataset_names=None, fraction=0.5, title=None, k0=1, 
                   ncol=3, fontsize=9, frameon=False)
 
         width = max(len("Dataset"), *(len(label[n]) for n in names)) + 2
-        rows = sorted(names, key=lambda n: -np.nan_to_num(results[n]["score"], nan=-np.inf))
+        rows = (sorted(names, key=lambda n: -np.nan_to_num(results[n]["score"], nan=-np.inf))
+                if sort else names)
         table = "\n".join(
             f"  {label[n]:<{width}}{results[n]['k_cross']:>9.0f}   {results[n]['mean_precision']:>9.3f}"
             f"   {results[n]['score']:>7.3f}   {float(auprc.get(n, np.nan)):>7.4f}"
             for n in rows)
         P, N = ref_hm["n_tp"], ref_hm["n_pairs"]
         start_text = f" (from the {k0}th on)" if k0 > 1 else ""
+        if crossing == "last":
+            crossing_line = (f"(4) For each dataset, the largest TP{start_text} where its precision is still "
+                             "at or above it\n     (where it falls below for the last time; dots; table).\n")
+        else:
+            crossing_line = (f"(4) For each dataset, the TP{start_text} where its precision first falls "
+                             "below it (dots; table).\n")
         where = f"{_display_name(ref)}, TP {k_max}" + (f"–{k_max + max_window - 1}" if max_window > 1 else "")
         if max_window > 1:
             max_lines = (f"(2) Max = highest precision any dataset keeps for {max_window} consecutive TPs"
@@ -1805,7 +1824,7 @@ def plot_half_max_explainer(dataset_names=None, fraction=0.5, title=None, k0=1, 
             "     Identical for all datasets (same shared genes). The area is measured from this line.\n" +
             max_lines +
             f"(3) Threshold = bg + {f_text} × (max − bg) = {thr:.3f}  ({f_word.lower()} max; options 1/2, 3/4, 1/4) — one value for all.\n"
-            f"(4) For each dataset, the TP{start_text} where its precision first falls below it (dots; table).\n"
+            + crossing_line +
             f"(5) K = the largest of these TPs = {K:.0f} ({_display_name(last)}) — one vertical line for all datasets.\n"
             "(6) For each dataset, average its precision over TP 1 → K, then rescale so random = 0 and perfect = 1:\n\n"
             "         mean precision  =  area under p(k) from k = 1 to K  /  (K − 1)     (trapezoid; = average of p(k))\n\n"

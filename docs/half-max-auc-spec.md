@@ -1,4 +1,20 @@
-# Spec: half-max AUC (early precision, global PRA, pFLEX 2.0)
+# Spec: half-max AUC (early precision, global PRA, pFLEX 2.1)
+
+## Changes in 2.1
+
+- **Max from the 10th TP** (`k0=10`, was 1): the first few TPs are noisy (one
+  or two lucky hits give precision 1), and a max from them puts the threshold
+  above the curves' real level.
+- **Crossing = the largest TP still at or above the threshold**
+  (`crossing="last"`, was `"first"`): with "first falls below", a curve that
+  starts below the threshold (first pairs wrong) and rises above it later
+  crossed at its start. On GO BP this cut the shared window at TP 5 although
+  the best curves stay above the threshold until TP ~2,700, so the window did
+  not reach where the best curve crosses.
+- **Bar plot and explainer table in dataset order** (`sort=False`, was sorted
+  by score).
+
+`k0=1, crossing="first"` reproduces the 2.0 scores.
 
 ## Why
 
@@ -30,9 +46,9 @@ have the same number of true positives `P`, pairs `N` and background.
 
 1. **Curve points.** One point per true positive: for the k-th TP found at rank
    `r_k`, `p(k) = k / r_k`.
-2. **Start for max and crossing.** `K0 = 1` by default: both are searched from
-   the first TP. Option `k0=10` starts the search at the 10th TP, where the log
-   plot starts (the first TPs are noisy). The area always starts at TP 1.
+2. **Start for max and crossing.** `K0 = 10` by default: both are searched
+   from the 10th TP, where the log plot starts (the first TPs are noisy).
+   `k0=1` searches from the first TP (2.0). The area always starts at TP 1.
 3. **Background.** `p_bg = P / N`, the precision of a random ranking. The same
    for every dataset; if it differs, a warning is logged and the reference
    dataset's value is used for the threshold.
@@ -48,10 +64,13 @@ have the same number of true positives `P`, pairs `N` and background.
    **default**), 3/4 or 1/4; `fraction="half"`, `"three_quarter"`, `"quarter"`
    or a number in (0, 1). Example: max 0.8, bg 0.1 → 3/4: 0.625, 1/2: 0.45,
    1/4: 0.275. A lower fraction cuts later.
-6. **Crossing (per dataset).** `k_cross` = the first `k >= K0` with
-   `p(k) < p_threshold`, interpolated linearly between the last TP above and
-   the first TP below. Later recoveries are ignored. `K0` if the curve starts
-   below the threshold, `P` if it never falls below.
+6. **Crossing (per dataset).** `k_cross` = the largest `k >= K0` with
+   `p(k) >= p_threshold`, interpolated linearly between that TP and the next
+   (below) one: where the curve falls below the threshold for the last time.
+   A curve that starts below the threshold and rises above it later is not
+   cut at its start. `K0` if the curve is never at or above the threshold, `P`
+   if it ends at or above. Option `crossing="first"` (2.0): the first
+   `k >= K0` with `p(k) < p_threshold`, later recoveries ignored.
 7. **Window (one for all datasets).** `K = max k_cross` over the datasets
    (`cut_from` names the dataset). Every dataset is scored over TP 1 to K.
 8. **Score.**
@@ -71,10 +90,10 @@ up to `K` in the average, so dropping early lowers its score.
 
 ## API
 
-- `half_max_auc(prediction, k0=1, threshold=None, k_end=None, max_window=1, fraction=0.5, max_rank=1)`:
+- `half_max_auc(prediction, k0=10, threshold=None, k_end=None, max_window=1, fraction=0.5, max_rank=1, crossing="last")`:
   one ranked label vector. Without `threshold` it uses the dataset's own
   threshold; without `k_end` its own crossing as the window end.
-- `half_max_auc_scores(fraction=0.5, k0=1, max_window=1, max_rank=1)`: reads every cached
+- `half_max_auc_scores(fraction=0.5, k0=10, max_window=1, max_rank=1, crossing="last")`: reads every cached
   `pra` result, computes the shared threshold and window, scores all datasets,
   saves each under `half_max_auc` and returns `{dataset: result}`. Plots and
   `save_results_to_csv()` call it, so scores always reflect the current set of
@@ -92,15 +111,15 @@ fraction         3/4, 1/2 or 1/4
 p_threshold      shared threshold;   threshold_from: reference dataset
 k_cross          this dataset's own crossing
 k_cut            shared window end K; cut_from: dataset it comes from
-n_tp (P), n_pairs (N), k0, max_window, max_rank, reason
+n_tp (P), n_pairs (N), k0, max_window, max_rank, crossing, reason
 ```
 
 ## Edge cases
 
 - `P < K0` (fewer than 10 TPs): score NaN with a reason.
 - No dataset with precision above background: all scores NaN.
-- Every dataset below the threshold from `K0`: `K = K0`, the window is TP 1 to
-  `K0`.
+- Every dataset below the threshold from `K0` on: `K = K0`, the window is TP
+  1 to `K0`.
 - Window end beyond a dataset's last TP (only with different gene sets): cut
   at its last TP, with a reason.
 - Point exactly on the threshold counts as above.
@@ -111,9 +130,9 @@ n_tp (P), n_pairs (N), k0, max_window, max_rank, reason
   usual log-TP plot, the shared threshold (grey dashed), each dataset's
   crossing (dot) and the window end K (grey dotted). No area is shaded there,
   because the score is not an area on a log axis.
-- `plot_half_max_auc_scores(fraction=0.5)`: one bar per dataset
-  (`half_max_auc_values`, `three_quarter_max_auc_values`,
-  `quarter_max_auc_values`).
+- `plot_half_max_auc_scores(fraction=0.5)`: one bar per dataset, in dataset
+  order (`sort=True`: by score) (`half_max_auc_values`,
+  `three_quarter_max_auc_values`, `quarter_max_auc_values`).
 - `plot_half_max_explainer(fraction=0.5)` (optional): step-by-step figure on
   the linear TP axis, with the scored area, the formula and a results table.
 - `save_results_to_csv()` writes `csv/half_max_auc.csv` (default fraction).
