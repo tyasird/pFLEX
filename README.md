@@ -19,6 +19,7 @@ Genetic networks derived from omics data are a powerful tool for systematic gene
 - Precision-recall curve generation for ranked gene lists
 - Evaluation using CORUM-derived modules, GO terms, and pathways
 - Module-level resolution analysis and visualization
+- Half-max AUC: an early-precision score that compares datasets on the top of their ranking
 - Easy integration into CRISPR screen workflows
 - Packaged DepMap example inputs filtered to CORUM genes
 
@@ -193,6 +194,98 @@ globalpr_ax = flex.plot_globalpr_filter()
 The calculation and plotting calls are intentionally separate. Calling a
 filter plotting function before its matching calculation raises an error that
 identifies the required preparation function.
+
+### Early precision: half-max AUC
+
+Global AUPRC averages precision over all of recall, so the long tail of
+low-precision pairs decides most of its value. A dataset that is clearly better
+among its top predictions can still get a lower AUPRC than one with a long,
+weak tail. The half-max AUC scores only the high-precision head of the PR
+curves, in one TP window that is the same for all datasets. Standard AUPRC is
+not changed.
+
+**How it is computed** (for the datasets run through `pra()`, compared over the
+same genes):
+
+1. Each true positive is one point: the k-th true pair found at rank r has
+   precision p(k) = k / r.
+2. Background `bg = P / N` (true pairs / all pairs), the precision of a random
+   ranking. The same for all datasets.
+3. Max = the highest precision of any dataset.
+4. Threshold = `bg + fraction × (max − bg)`; `fraction` is 1/2 by default (half
+   max). One threshold for all datasets.
+5. For each dataset, the TP where its precision first falls below the
+   threshold. K = the latest of these TPs.
+6. Window: TP 1 to K, the same for every dataset.
+7. Score = (average precision over TP 1 to K − bg) / (1 − bg). The average is
+   taken on the linear TP axis (every TP has the same weight, no weighting). A
+   random ranking scores 0, a perfect ranking 1. A dataset that drops below the
+   threshold before K keeps its low precision in the average.
+
+**Usage** (after `pra()` has been run for every dataset):
+
+```python
+# Scores for all datasets, as {dataset: result dict}
+scores = flex.half_max_auc_scores()                        # half max (default)
+scores_3q = flex.half_max_auc_scores(fraction="three_quarter")
+scores_q = flex.half_max_auc_scores(fraction="quarter")
+
+for name, res in scores.items():
+    print(name, round(res["score"], 3), "window TP 1 ->", round(res["k_cut"]))
+
+# One bar per dataset
+flex.plot_half_max_auc_scores()                            # saved as half_max_auc_values
+flex.plot_half_max_auc_scores(fraction="quarter")          # quarter_max_auc_values
+
+# PR curves with the threshold, each dataset's crossing and the window end K
+flex.plot_precision_recall_curve(half_max=True)
+
+# Optional step-by-step figure for sharing: curves on the linear TP axis with
+# the scored area, the formula and a results table
+flex.plot_half_max_explainer()                             # half_max_explainer
+flex.plot_half_max_explainer(dataset_names=["Skin", "Soft Tissue"], fraction="three_quarter")
+
+# The scores are also written to csv/half_max_auc.csv (default settings)
+flex.save_results_to_csv()
+```
+
+**Parameters** (accepted by `half_max_auc_scores`, `plot_half_max_auc_scores`
+and `plot_half_max_explainer`):
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| `fraction` | `0.5` | Threshold position between background and max: `"half"` / `0.5`, `"three_quarter"` / `0.75`, `"quarter"` / `0.25`, or any number in (0, 1). Higher = stricter threshold, shorter window. |
+| `max_rank` | `1` | Use the n-th highest precision as the max. `max_rank=3` takes the 3rd highest, so one or two lucky early hits cannot set the threshold (a curve at 1, 1, 1, ... still gives 1). |
+| `max_window` | `1` | Require the max to be held for this many consecutive TPs. `max_window=3`: the highest precision kept for 3 TPs in a row. |
+| `k0` | `1` | TP where the search for the max and for the crossings starts. `k0=10` ignores the first 9 TPs for these two steps (the area still starts at TP 1). |
+
+`plot_precision_recall_curve(half_max=True)` takes the same settings as
+`half_max_fraction`, `half_max_rank`, `half_max_window` and `half_max_k0`.
+`plot_half_max_explainer` also takes `dataset_names` (which datasets to show,
+in this order; the threshold and K are still computed from all datasets),
+`title` and `filename`.
+
+**Result fields** (one dict per dataset):
+
+| Field | Meaning |
+| --- | --- |
+| `score` | (mean precision − background) / (1 − background); random 0, perfect 1 |
+| `mean_precision` | average precision over TP 1 to K |
+| `area` | area under the precision curve from TP 1 to K (linear TP axis) |
+| `p_bg` | background P / N |
+| `p_max`, `k_max` | this dataset's max precision and the TP where it is reached |
+| `p_threshold`, `threshold_from` | the shared threshold and the dataset whose max set it |
+| `k_cross` | the TP where this dataset first falls below the threshold |
+| `k_cut`, `cut_from` | the shared window end K and the dataset it comes from |
+| `fraction`, `max_rank`, `max_window`, `k0` | the settings used |
+| `n_tp`, `n_pairs` | true pairs (P) and all pairs (N) |
+| `reason` | why the score is missing, if it is NaN (e.g. fewer TPs than `k0`) |
+
+For one ranked label vector outside the pipeline,
+`flex.half_max_auc(prediction, threshold=None, k_end=None, ...)` returns the
+same fields; without `threshold` and `k_end` it uses the dataset's own
+threshold and crossing. The full definition is in
+[docs/half-max-auc-spec.md](docs/half-max-auc-spec.md).
 
 See the [User Guide](https://tyasird.github.io/pFLEX/user-guide/) for a detailed explanation of every input field, configuration key, function, return value, and output.
 

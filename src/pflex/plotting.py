@@ -1694,7 +1694,9 @@ def plot_half_max_explainer(dataset_names=None, fraction=0.5, title=None, k0=1, 
     filename = filename or f"{fname}_max_explainer"
     results = half_max_auc_scores(fraction=f, k0=k0, max_window=max_window, max_rank=max_rank)
     # Natural order (SVD_2 before SVD_10) unless the caller gives one.
-    names = [n for n in (dataset_names or sorted(results, key=_natural_key)) if n in results]
+    # Names as written by the user ("Soft Tissue") or as stored ("Soft_Tissue").
+    wanted = [_sanitize(n) for n in dataset_names] if dataset_names else sorted(results, key=_natural_key)
+    names = [n for n in wanted if n in results]
     valid = [n for n in names if np.isfinite(results[n]["score"])]
     if not valid:
         raise RuntimeError("No half-max AUC scores to explain. Run pra() for each dataset first.")
