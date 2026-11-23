@@ -1,9 +1,9 @@
 from .logging_config import log
 from .utils import dsave, dload
 from .preprocessing import example_input_path, get_example_data_path, load_datasets,  get_common_genes, filter_matrix_by_genes, load_functional_standard, filter_duplicate_terms
-from .analysis import initialize, prepare_terms_for_dataset, pra, pra_per_module, fast_corr, perform_corr, is_symmetric, binary, has_mirror_of_first_pair, convert_full_to_half_matrix, drop_mirror_pairs, quick_sort, module_contributions, save_results_to_csv, update_matploblib_config, mpr_prepare, mpr_filter, globalpr_filter
+from .analysis import initialize, prepare_terms_for_dataset, pra, pra_per_module, fast_corr, perform_corr, is_symmetric, binary, has_mirror_of_first_pair, convert_full_to_half_matrix, drop_mirror_pairs, quick_sort, module_contributions, save_results_to_csv, half_max_auc, half_max_auc_scores, update_matploblib_config, mpr_prepare, mpr_filter, globalpr_filter
 from .plotting import (
-    plot_precision_recall_curve, plot_aggregated_pra, plot_iqr_pra, plot_all_runs_pra, plot_per_module_scatter,
+    plot_precision_recall_curve, plot_half_max_auc_scores, plot_half_max_explainer, plot_aggregated_pra, plot_iqr_pra, plot_all_runs_pra, plot_per_module_scatter,
     plot_per_module_scatter_by_size, plot_module_contributions, plot_significant_modules, plot_auc_scores,
     plot_mpr_module_coverage_curve, plot_mpr_module_auc_scores, plot_mpr_summary,
     plot_mpr_filter, plot_globalpr_filter, plot_panels
@@ -37,7 +37,7 @@ __all__ = [ "log", "example_input_path", "get_example_data_path", "fast_corr",
     "perform_corr", "is_symmetric", "binary", "has_mirror_of_first_pair", "convert_full_to_half_matrix",
     "drop_mirror_pairs", "quick_sort", "module_contributions", "plot_precision_recall_curve",
     "plot_aggregated_pra", "plot_iqr_pra", "plot_all_runs_pra", "plot_per_module_scatter", "plot_per_module_scatter_by_size", "plot_module_contributions",
-    "plot_significant_modules", "plot_auc_scores", "plot_mpr_module_auc_scores", "save_results_to_csv", "update_matploblib_config",
+    "plot_significant_modules", "plot_auc_scores", "plot_half_max_auc_scores", "plot_half_max_explainer", "plot_mpr_module_auc_scores", "save_results_to_csv", "half_max_auc", "half_max_auc_scores", "update_matploblib_config",
     "mpr_prepare", "mpr_filter", "globalpr_filter", "plot_mpr_filter", "plot_globalpr_filter", "plot_panels",
     "plot_mpr_module_coverage_curve", "plot_mpr_summary", "main"
 ]

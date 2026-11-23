@@ -17,6 +17,7 @@ mpl.rcParams['text.usetex'] = False
 
 # Local modules
 from .utils import dload, _sanitize
+from .analysis import half_max_auc_scores, threshold_name
 from .logging_config import log
 from .style import PUBLICATION_RC
 
@@ -771,6 +772,19 @@ def _global_prevalence(pra):
     return float(pra.tp.iloc[-1]) / len(pra)
 
 
+def _draw_half_max(ax, pra, hm, color, line_width):
+    """Dot where one dataset's precision first falls below the shared threshold.
+
+    No shaded area: this plot has a log TP axis, while the score averages
+    precision over the linear TP axis, so an area drawn here would not be the
+    area that is scored (see ``plot_half_max_explainer`` for that).
+    """
+    if not hm or not np.isfinite(hm.get("k_cross", np.nan)):
+        return
+    ax.plot(hm["k_cross"], hm["p_threshold"], "o", ms=3.5, mfc=color, mec="black",
+            mew=0.4, zorder=5)
+
+
 def _finish_pr_axes(ax, min_precision, title=None, baselines=()):
     """``baselines`` are global prevalences drawn as black dashed lines."""
     ax.set_box_aspect(CURVE_BOX_ASPECT)
@@ -802,14 +816,28 @@ def plot_precision_recall_curve(line_width=1.0, hide_minor_ticks=True, min_preci
                                 title="Global Precision–Recall (precision of top-ranked gene pairs)",
                                 caption="Gene pairs ranked by score; a true positive is a pair "
                                         "sharing a module in {standard}.",
-                                global_prevalence=False, ax=None):
+                                global_prevalence=False, half_max=False, half_max_fraction=0.5,
+                                half_max_k0=1, half_max_window=1, half_max_rank=1, ax=None):
     """Global PR curve of every dataset.
 
     ``global_prevalence=True`` adds a black dashed line at the fraction of all
     gene pairs that are true positives, the precision a random ranking would reach.
+
+    ``half_max=True`` marks the half-max AUC window: the threshold shared by
+    all datasets (background + ``half_max_fraction`` of the distance to the
+    highest precision of any dataset; 1/2, 3/4 or 1/4) as a grey dashed line,
+    each dataset's crossing as a dot, and the shared window end (the latest
+    crossing) as a grey dotted line. No area is shaded: the x axis here is
+    log-scaled for reading, while the score averages precision over the
+    linear TP axis (see ``half_max_auc_scores``, ``plot_half_max_explainer``).
+    ``half_max_k0``, ``half_max_window`` and ``half_max_rank`` are its ``k0``,
+    ``max_window`` and ``max_rank``.
     """
     pra = dload("pra")
     config = dload("config")
+    hm_all = (half_max_auc_scores(fraction=half_max_fraction, k0=half_max_k0,
+                                  max_window=half_max_window, max_rank=half_max_rank)
+              if half_max else None)
     fig, ax, owns = _start(ax, CURVE_FIGSIZE)
     _setup_log_tp_axis(ax, hide_minor_ticks)
 
@@ -825,8 +853,18 @@ def plot_precision_recall_curve(line_width=1.0, hide_minor_ticks=True, min_preci
             baselines.append(_global_prevalence(val))
         shown = val[val.tp > 10]
         ax.plot(shown.tp, shown.precision, c=color, label=label, linewidth=line_width, alpha=0.9)
+        if half_max:
+            hm = next(iter(hm_all.values()), None) if name is None else hm_all.get(name)
+            _draw_half_max(ax, val, hm, color, line_width)
 
     _finish_pr_axes(ax, min_precision, title, baselines)
+    if half_max:
+        # One shared threshold and one shared window end for all datasets.
+        valid = [hm for hm in hm_all.values() if np.isfinite(hm["k_cut"])]
+        for threshold in {round(hm["p_threshold"], 12) for hm in valid}:
+            ax.axhline(threshold, c="grey", linestyle="--", linewidth=0.8 * line_width)
+        for k_cut in {round(hm["k_cut"], 6) for hm in valid}:
+            ax.plot([k_cut, k_cut], [0, 1], c="grey", linestyle=":", linewidth=0.8 * line_width)
     _caption(ax, (caption or "").format(standard=config.get("functional_standard", "the reference set")))
     _finish(fig, owns, config, "precision_recall_curve")
     return ax
@@ -1581,6 +1619,213 @@ def plot_auc_scores(title="Area under the global PR curve per dataset",
     return pra_dict
 
 
+@_publication_style
+def plot_half_max_auc_scores(fraction=0.5, k0=1, max_window=1, max_rank=1, title=None,
+                             caption="Mean precision of the TPs from the first TP to the shared cut "
+                                     "(linear TP axis), scaled so background is 0 and perfect is 1.",
+                             ax=None):
+    """One bar per dataset with the half-max AUC (see ``half_max_auc_scores``).
+
+    ``fraction`` sets the threshold: 1/2 (half max, default), 3/4 or 1/4 of
+    the distance from background to the max. ``k0``, ``max_window`` and ``max_rank`` as in
+    ``half_max_auc_scores``. Saved as ``half_max_auc_values``
+    (``three_quarter_max_auc_values``, ``quarter_max_auc_values``).
+    """
+    config = dload("config")
+    name = threshold_name(fraction)
+    f_word, _ = _fraction_text(fraction)
+    hm_all = half_max_auc_scores(fraction=fraction, k0=k0, max_window=max_window, max_rank=max_rank)
+    scores = {d: hm["score"] for d, hm in hm_all.items()}
+
+    datasets = sorted(scores, key=lambda d: np.nan_to_num(scores[d], nan=-np.inf), reverse=True)
+    colors = _plot_dataset_colors(datasets, None, config, dload("input", "colors"))
+
+    fig, ax, owns = _start(ax, _bar_figsize(len(datasets)))
+    _value_bars(ax, [_display_name(d) for d in datasets], [scores[d] for d in datasets], colors)
+    ax.set_ylabel(f"{f_word}-max AUC")
+    _set_title(ax, title if title is not None
+               else f"{f_word}-max AUC of the global PR curve per dataset")
+    _caption(ax, caption)
+    _finish(fig, owns, config, f"{name}_max_auc_values")
+    return scores
+
+
+def _natural_key(name):
+    """Sort key that puts SVD_2 before SVD_10."""
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", str(name))]
+
+
+_FRACTION_TEXT = {"three_quarter": ("Three-quarter", "3/4"), "half": ("Half", "1/2"),
+                  "quarter": ("Quarter", "1/4")}
+
+
+def _fraction_text(fraction):
+    """("Half", "1/2") etc. for the named fractions, otherwise the number twice."""
+    name = threshold_name(fraction)
+    return _FRACTION_TEXT.get(name, (name, name))
+
+
+def plot_half_max_explainer(dataset_names=None, fraction=0.5, title=None, k0=1, max_window=1, max_rank=1,
+                            filename=None):
+    """Step-by-step explanation figure of the half-max AUC, for sharing.
+
+    Optional; nothing else depends on it. Uses the cached global PRA results
+    (run ``pra()`` for every dataset first) and draws the PR curves on a
+    **linear** TP axis, the axis the score is computed on, with each step
+    marked: (1) background, (2) max held for ``max_window`` TPs,
+    (3) threshold (``fraction`` 1/2, 3/4 or 1/4 of the way from background to
+    the max), (4) each dataset's crossing, (5) the single TP line K, (6) the
+    scored window TP 1 to K and the area above background. Below the plot:
+    how the score is calculated, the formula and a table with each dataset's
+    crossing, mean precision, score and AUPRC.
+
+    ``dataset_names`` limits and orders the datasets (the threshold and K are
+    still computed from all of them). Saved as ``filename`` (default
+    ``half_max_explainer``, ``three_quarter_max_explainer``,
+    ``quarter_max_explainer``) in the output folder when
+    ``plotting.save_plot`` is on. Returns the half-max results.
+    """
+    from .analysis import _tp_precision, _threshold_fraction
+
+    config = dload("config")
+    f = _threshold_fraction(fraction)
+    fname = threshold_name(f)
+    f_word, f_text = _fraction_text(f)
+    filename = filename or f"{fname}_max_explainer"
+    results = half_max_auc_scores(fraction=f, k0=k0, max_window=max_window, max_rank=max_rank)
+    # Natural order (SVD_2 before SVD_10) unless the caller gives one.
+    names = [n for n in (dataset_names or sorted(results, key=_natural_key)) if n in results]
+    valid = [n for n in names if np.isfinite(results[n]["score"])]
+    if not valid:
+        raise RuntimeError("No half-max AUC scores to explain. Run pra() for each dataset first.")
+    ref_hm = results[valid[0]]
+    bg, thr, K = ref_hm["p_bg"], ref_hm["p_threshold"], ref_hm["k_cut"]
+    ref, last = ref_hm["threshold_from"], ref_hm["cut_from"]
+    p_max, k_max = results[ref]["p_max"], results[ref]["k_max"]
+    pra = dload("pra")
+    auprc = dload("pr_auc") or {}
+    colors = dict(zip(names, _plot_dataset_colors(names, None, config, dload("input", "colors"))))
+    label = {n: _display_name(n) for n in names}
+    box = dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.85)
+    # Overlapping shades add up; keep the combined shade light with many datasets.
+    fill_alpha = min(0.13, 0.5 / len(names))
+    x_hi = K * 1.5
+
+    with mpl.rc_context({"font.family": "DejaVu Sans", "font.size": 10,
+                         "axes.spines.top": False, "axes.spines.right": False}):
+        n_rows = len(names)
+        legend_h = 0.9 + 0.22 * ((n_rows + 2) // 3)
+        plot_h, text_h = 7.0, 4.4 + 0.17 * n_rows
+        H = plot_h + legend_h + text_h + 0.5
+        fig = plt.figure(figsize=(12, H))
+        ax = fig.add_axes([0.08, (text_h + legend_h) / H, 0.88, plot_h / H])
+
+        for n in names:
+            k, p, *_ = _tp_precision(pra[n]["prediction"].to_numpy(), 1)
+            if k is None:
+                continue
+            shown = np.flatnonzero(k <= x_hi)
+            ax.plot(k[shown], p[shown], c=colors[n], lw=1.5, label=label[n], zorder=3)
+            if np.isfinite(results[n]["score"]):
+                inside = np.flatnonzero(k < K)  # the area starts at the first TP
+                p_end = np.interp(K, k, p)
+                ax.fill_between(np.append(k[inside], K), np.append(p[inside], p_end), bg,
+                                color=colors[n], alpha=fill_alpha, lw=0, zorder=1)
+
+        ax.axhline(bg, c="black", lw=1.2, ls="-.", zorder=2)
+        ax.text(x_hi * 0.99, bg + 0.02, f"(1) background {bg:.4f}", ha="right", va="bottom",
+                fontsize=9, bbox=box, zorder=7)
+
+        ax.plot(k_max, p_max, "v", ms=9, c="black", zorder=6)
+        ax.annotate(f"(2) max {p_max:.2f}", xy=(k_max, p_max), xytext=(k_max + 0.06 * x_hi, 1.12),
+                    ha="left", fontsize=9, bbox=box, zorder=7,
+                    arrowprops=dict(arrowstyle="->", color="black"))
+
+        ax.axhline(thr, c="0.35", lw=1.2, ls="--", zorder=2)
+        ax.text(x_hi * 0.99, thr + 0.02, f"(3) {f_word.lower()}-max threshold {thr:.3f}", ha="right",
+                va="bottom", fontsize=9, color="0.2", bbox=box, zorder=7)
+
+        crossings = {n: results[n]["k_cross"] for n in names if np.isfinite(results[n]["k_cross"])}
+        for n, c in crossings.items():
+            ax.plot(c, thr, "o", ms=7, mfc=colors[n], mec="black", zorder=6)
+        if crossings:
+            first = min(crossings.values())
+            near_edge = first < 0.08 * x_hi  # keep the label inside the axes
+            ax.text(first, thr - 0.03, "(4) crossings", ha="left" if near_edge else "center",
+                    va="top", fontsize=9, bbox=box, zorder=7)
+
+        ax.axvline(K, c="black", lw=1.6, ls=":", zorder=4)
+        ax.text(K + 0.01 * x_hi, 1.06, f"(5) K = {K:.0f}", ha="left", va="center", fontsize=9,
+                bbox=box, zorder=7)
+
+        y_arrow = bg + 0.015
+        ax.annotate("", xy=(K, y_arrow), xytext=(1, y_arrow),
+                    arrowprops=dict(arrowstyle="<->", color="black", lw=1.2), zorder=7)
+        ax.text(K / 2, y_arrow + 0.012, f"(6) scored window TP 1 → {K:.0f}",
+                ha="center", va="bottom", fontsize=9, bbox=box, zorder=7)
+
+        ax.set_xlim(0, x_hi)
+        ax.set_ylim(0, 1.18)
+        ax.set_yticks(np.arange(0, 1.01, 0.2))
+        ax.set_xlabel("Number of true positives (TP), linear scale (the axis the score is computed on)")
+        ax.set_ylabel("Precision")
+        standard = config.get("functional_standard", "")
+        ax.set_title(title or f"{f_word}-max AUC, step by step ({standard})", fontsize=13, pad=10)
+        handles, labels = ax.get_legend_handles_labels()
+        handles.append(patches.Patch(color="0.6", alpha=0.35))
+        labels.append("shaded: area above background,\nTP 1 to K (scored)")
+        # Below the axis label, so it never covers the curves or the step labels.
+        ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.09),
+                  ncol=3, fontsize=9, frameon=False)
+
+        width = max(len("Dataset"), *(len(label[n]) for n in names)) + 2
+        rows = sorted(names, key=lambda n: -np.nan_to_num(results[n]["score"], nan=-np.inf))
+        table = "\n".join(
+            f"  {label[n]:<{width}}{results[n]['k_cross']:>9.0f}   {results[n]['mean_precision']:>9.3f}"
+            f"   {results[n]['score']:>7.3f}   {float(auprc.get(n, np.nan)):>7.4f}"
+            for n in rows)
+        P, N = ref_hm["n_tp"], ref_hm["n_pairs"]
+        start_text = f" (from the {k0}th on)" if k0 > 1 else ""
+        where = f"{_display_name(ref)}, TP {k_max}" + (f"–{k_max + max_window - 1}" if max_window > 1 else "")
+        if max_window > 1:
+            max_lines = (f"(2) Max = highest precision any dataset keeps for {max_window} consecutive TPs"
+                         f"{start_text}\n     ({where}: {p_max:.3f}).\n")
+        elif max_rank > 1:
+            nth = {2: "2nd", 3: "3rd"}.get(max_rank, f"{max_rank}th")
+            max_lines = (f"(2) Max = the {nth} highest precision of any dataset{start_text}, so one or two\n"
+                         f"     lucky early hits do not set it ({where}: {p_max:.3f}).\n")
+        else:
+            max_lines = f"(2) Max = highest precision of any dataset{start_text} ({where}: {p_max:.3f}).\n"
+        text = (
+            "HOW THE SCORE IS CALCULATED  (linear TP axis, every TP has the same weight)\n\n"
+            "Each point of a curve is one true positive: the k-th true pair found at rank r has precision p(k) = k / r.\n\n"
+            f"(1) Background  bg = P / N = {P:,} / {N:,} = {bg:.4f}: the precision of a random ranking.\n"
+            "     Identical for all datasets (same shared genes). The area is measured from this line.\n" +
+            max_lines +
+            f"(3) Threshold = bg + {f_text} × (max − bg) = {thr:.3f}  ({f_word.lower()} max; options 1/2, 3/4, 1/4) — one value for all.\n"
+            f"(4) For each dataset, the TP{start_text} where its precision first falls below it (dots; table).\n"
+            f"(5) K = the largest of these TPs = {K:.0f} ({_display_name(last)}) — one vertical line for all datasets.\n"
+            "(6) For each dataset, average its precision over TP 1 → K, then rescale so random = 0 and perfect = 1:\n\n"
+            "         mean precision  =  area under p(k) from k = 1 to K  /  (K − 1)     (trapezoid; = average of p(k))\n\n"
+            "         score  =  ( mean precision − bg )  /  ( 1 − bg )\n\n"
+            "     A dataset that drops below the threshold before K keeps its low precision in the average.\n\n"
+            f"  {'Dataset':<{width}}{'crossing':>9}   {'mean prec':>9}   {'score':>7}   {'AUPRC':>7}\n"
+            + table
+        )
+        fig.text(0.08, (text_h - 0.1) / H, text, fontsize=9.6, family="DejaVu Sans Mono", va="top")
+
+        plot_config = config["plotting"]
+        if plot_config.get("save_plot", False):
+            output_type = plot_config.get("output_type", "pdf")
+            path = Path(config["output_folder"]) / f"{filename}.{output_type}"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(path, format=output_type, dpi=170, bbox_inches="tight")
+        if plot_config.get("show_plot", True):
+            plt.show()
+        plt.close(fig)
+    return results
+
+
 DEFAULT_COLORS = [
     "#4E79A7",
     "#E15759",
@@ -1641,7 +1886,8 @@ def _plot_dataset_colors(dataset_names, colors, config, input_colors):
         for i in range(count)
     ]
     return [
-        input_colors.get(_sanitize(name), defaults[i])
+        # Datasets added without a color are stored with None: use the default.
+        input_colors.get(_sanitize(name)) or defaults[i]
         for i, name in enumerate(dataset_names)
     ]
 

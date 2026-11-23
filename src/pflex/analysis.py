@@ -408,6 +408,235 @@ def _corrected_auc(df: pd.DataFrame) -> float:
         return np.nan
     return _trapz(valid["precision"], valid["recall"]) - valid["precision"].iloc[-1]
 
+def _tp_precision(prediction, k0):
+    """Curve points from the ``k0``-th TP on: (k, precision of the k-th TP, P / N).
+
+    The k-th TP found at rank r has precision k / r. Returns ``None`` for the
+    points when there are fewer than ``k0`` true positives.
+    """
+    labels = np.asarray(prediction).astype(bool)
+    n_pairs, n_tp = len(labels), int(labels.sum())
+    p_bg = n_tp / n_pairs if n_pairs else np.nan
+    if n_tp < max(k0, 1):
+        return None, None, p_bg, n_tp, n_pairs
+    k = np.arange(1, n_tp + 1)
+    precision = k / (np.flatnonzero(labels) + 1)
+    return k[k0 - 1:], precision[k0 - 1:], p_bg, n_tp, n_pairs
+
+
+def _sustained_max(precision, window, rank=1):
+    """The ``rank``-th highest precision (held for ``window`` consecutive TPs), and where it is.
+
+    ``window=1, rank=1`` (defaults): the plain max. ``window > 1``: the
+    rolling minimum over ``window`` TPs is ranked instead of single points.
+    ``rank=3``: the 3rd highest value, so one or two lucky hits cannot set it
+    (precision 1, 1, 1, ... still gives 1). The index is the first TP that
+    reaches that value.
+    """
+    window = max(1, min(int(window), len(precision)))
+    if window == 1:
+        values = np.asarray(precision)
+    else:
+        values = np.lib.stride_tricks.sliding_window_view(precision, window).min(axis=1)
+    rank = max(1, min(int(rank), len(values)))
+    value = float(np.partition(values, len(values) - rank)[len(values) - rank])
+    i = int(np.flatnonzero(values >= value)[0])
+    return value, i
+
+
+def _threshold_crossing(k, precision, threshold):
+    """TP where precision first falls below ``threshold``, interpolated linearly in TP.
+
+    ``k[0]`` if it starts below, ``k[-1]`` if it never falls below.
+    """
+    below = np.flatnonzero(precision < threshold)
+    if below.size == 0:
+        return float(k[-1])
+    j = int(below[0])
+    if j == 0:
+        return float(k[0])
+    frac = (precision[j - 1] - threshold) / (precision[j - 1] - precision[j])
+    return float(k[j - 1] + frac * (k[j] - k[j - 1]))
+
+
+def _tp_area(k, precision, k_end):
+    """Trapezoid area under precision over the (linear) TP axis, from ``k[0]`` to ``k_end``.
+
+    Every TP has the same width, so area / (k_end - k[0]) is the plain average
+    precision over the window. No weighting.
+    """
+    inside = k < k_end
+    xs = np.append(k[inside], k_end)
+    ys = np.append(precision[inside], np.interp(k_end, k, precision))
+    return float(_trapz(ys, xs))
+
+
+THRESHOLD_FRACTIONS = {"three_quarter": 3 / 4, "half": 1 / 2, "quarter": 1 / 4}
+
+
+def _threshold_fraction(fraction):
+    """``fraction`` as a number: 0.75, 0.5, 0.25, or "three_quarter" / "half" / "quarter"."""
+    if isinstance(fraction, str):
+        if fraction not in THRESHOLD_FRACTIONS:
+            raise ValueError(f"fraction must be one of {sorted(THRESHOLD_FRACTIONS)} or a number in (0, 1)")
+        return THRESHOLD_FRACTIONS[fraction]
+    fraction = float(fraction)
+    if not 0 < fraction < 1:
+        raise ValueError("fraction must be in (0, 1)")
+    return fraction
+
+
+def threshold_name(fraction):
+    """"three_quarter" / "half" / "quarter" for the named fractions, otherwise the number."""
+    f = _threshold_fraction(fraction)
+    for name, value in THRESHOLD_FRACTIONS.items():
+        if np.isclose(f, value):
+            return name
+    return f"{f:g}"
+
+
+def half_max_auc(prediction, k0=1, threshold=None, k_end=None, max_window=1, fraction=0.5,
+                 max_rank=1):
+    """Half-max AUC of one ranked label vector.
+
+    ``prediction`` is the binary label vector in rank order. One curve point
+    per true positive: the k-th TP found at rank r has precision k / r.
+
+    - Max: the highest precision from the ``k0``-th TP on. Defaults use the
+      plain max from the first TP (``k0=1``, ``max_window=1``, ``max_rank=1``).
+      Options: ``max_rank=3`` takes the 3rd highest precision instead, so one
+      or two lucky hits cannot set it (1, 1, 1, ... still gives 1);
+      ``max_window=3`` takes the highest precision held for 3 consecutive TPs
+      (a single early hit cannot set it); ``k0=10`` starts the search for the
+      max and the crossing at the 10th TP, where the log plot starts.
+    - ``threshold``: background (P / N) + ``fraction`` of the distance from
+      background to the max. ``fraction`` 1/2 (default, half max), 3/4 or 1/4
+      (also "half", "three_quarter", "quarter"). Normally passed in, shared by
+      all datasets (``half_max_auc_scores``).
+    - ``k_cross``: the first TP from ``k0`` on where precision falls below the
+      threshold.
+    - Window: the linear TP axis from the **first** TP to ``k_end`` (always
+      from TP 1, whatever ``k0`` is). ``k_end`` is normally
+      passed in, the same for all datasets (the largest ``k_cross``);
+      otherwise this dataset's own ``k_cross``.
+    - ``area``: trapezoid area under precision over the linear TP axis.
+      ``mean_precision`` = area / (k_end - 1): the plain average precision of
+      the TPs in the window. Every TP has the same weight (no log scaling, no
+      weighting); a log TP axis is only used for plotting.
+    - ``score``: (mean_precision - background) / (1 - background), so the area
+      is measured from the background: a random ranking scores 0, a perfect
+      one 1, worse than random below 0.
+
+    See docs/half-max-auc-spec.md.
+    """
+    f = _threshold_fraction(fraction)
+    k_all, p_all, p_bg, n_tp, n_pairs = _tp_precision(prediction, 1)
+    res = {"score": np.nan, "mean_precision": np.nan, "area": np.nan,
+           "p_max": np.nan, "k_max": np.nan, "p_bg": p_bg, "fraction": f,
+           "p_threshold": np.nan, "k_cross": np.nan, "k_cut": np.nan,
+           "n_tp": n_tp, "n_pairs": n_pairs, "k0": k0, "max_window": max_window, "max_rank": max_rank,
+           "reason": ""}
+    if k_all is None or n_tp < k0:
+        res["reason"] = f"fewer than {k0} true positives"
+        return res
+    k, precision = k_all[k0 - 1:], p_all[k0 - 1:]
+
+    p_max, i_max = _sustained_max(precision, max_window, max_rank)
+    res.update(p_max=p_max, k_max=int(k[i_max]))
+    if threshold is None:
+        if p_max <= p_bg:
+            res["reason"] = "max precision not above background"
+            return res
+        threshold = p_bg + f * (p_max - p_bg)
+    res["p_threshold"] = float(threshold)
+    res["k_cross"] = _threshold_crossing(k, precision, threshold)
+
+    if k_end is None:
+        k_end = res["k_cross"]
+    if k_end > k_all[-1]:
+        res["reason"] = f"window end {k_end:.0f} beyond the last TP; cut at {k_all[-1]}"
+        k_end = float(k_all[-1])
+    res["k_cut"] = float(k_end)
+    width = k_end - k_all[0]  # linear TP axis, from the first TP
+    if width <= 0:
+        res["reason"] = "window has no width"
+        return res
+
+    area = _tp_area(k_all, p_all, k_end)
+    mean = area / width
+    res.update(area=area, mean_precision=mean, score=(mean - p_bg) / (1 - p_bg))
+    return res
+
+
+def half_max_auc_scores(fraction=0.5, k0=1, max_window=1, max_rank=1):
+    """Half-max AUC of every dataset with global PRA results, on one shared window.
+
+    1. Threshold: from the dataset with the highest precision (from the
+       ``k0``-th TP on, default the first; held for ``max_window`` consecutive
+       TPs, default 1; or its ``max_rank``-th highest value, default 1 = plain max): its
+       background (P / N) + ``fraction`` of the distance from background to
+       that max. ``fraction`` 1/2 (default), 3/4 or 1/4 ("half",
+       "three_quarter", "quarter").
+    2. Each dataset's ``k_cross``: where its precision first falls below it.
+    3. Window: TP 1 to the largest ``k_cross``, the same for every dataset.
+    4. Score: plain average precision over the window (linear TP axis, every
+       TP the same weight), measured from the background.
+
+    Results are saved under ``half_max_auc`` and returned as {dataset: dict}.
+    """
+    f = _threshold_fraction(fraction)
+    pra_all = dload("pra")
+    predictions = {name: df["prediction"].to_numpy() for name, df in pra_all.items()}
+
+    peaks = {}
+    for name, pred in predictions.items():
+        _, precision, p_bg, _, _ = _tp_precision(pred, k0)
+        if precision is not None:
+            peaks[name] = (_sustained_max(precision, max_window, max_rank)[0], p_bg)
+
+    threshold = ref = None
+    if peaks:
+        ref = max(peaks, key=lambda n: peaks[n][0])
+        p_max, p_bg = peaks[ref]
+        if p_max > p_bg:
+            threshold = p_bg + f * (p_max - p_bg)
+        if len({round(bg, 12) for _, bg in peaks.values()}) > 1:
+            log.warning("Half-max AUC: datasets have different background precision "
+                        "(different gene sets); the shared threshold uses the "
+                        f"background of '{ref}'.")
+
+    crossings = {}
+    if threshold is not None:
+        for name, pred in predictions.items():
+            k_cross = half_max_auc(pred, k0, threshold=threshold, max_window=max_window, max_rank=max_rank,
+                                   fraction=f)["k_cross"]
+            if np.isfinite(k_cross):
+                crossings[name] = k_cross
+    k_end = cut_from = None
+    if crossings:
+        cut_from = max(crossings, key=crossings.get)
+        k_end = crossings[cut_from]
+
+    results = {}
+    for name, pred in predictions.items():
+        if k_end is None:
+            res = half_max_auc(pred, k0, max_window=max_window, fraction=f, max_rank=max_rank)
+            res.update(score=np.nan, mean_precision=np.nan, area=np.nan,
+                       p_threshold=np.nan, k_cross=np.nan, k_cut=np.nan,
+                       reason=res["reason"] or "no dataset above background")
+        else:
+            res = half_max_auc(pred, k0, threshold=threshold, k_end=k_end,
+                               max_window=max_window, fraction=f, max_rank=max_rank)
+        res.update(threshold_from=ref, cut_from=cut_from)
+        results[name] = res
+        dsave(res, "half_max_auc", name)
+        log.info(f"Half-max AUC ({threshold_name(f)} max) {name}: {res['score']:.4f} "
+                 f"(mean precision {res['mean_precision']:.3f} over TP 1-{res['k_cut']:.0f}, "
+                 f"threshold {res['p_threshold']:.3f}, own crossing at TP {res['k_cross']:.0f})"
+                 + (f" - {res['reason']}" if res["reason"] else ""))
+    return results
+
+
 def _build_gene_to_pair_indices(pairwise_df):
     indices = pairwise_df.index.values
     genes = pd.concat([pairwise_df['gene1'], pairwise_df['gene2']], ignore_index=True)
@@ -1048,7 +1277,7 @@ def quick_sort(df, ascending=False):
     log.done("Pair-wise matrix sorting.")
     return sorted_df
 
-def save_results_to_csv(categories = ["module_contributions", "pr_auc", "pra_per_module", "mpr_modules_auc"]):
+def save_results_to_csv(categories = ["module_contributions", "pr_auc", "half_max_auc", "pra_per_module", "mpr_modules_auc"]):
 
     config = dload("config")  # Load config to get output folder
     output_folder = Path(config.get("output_folder", "output"))
@@ -1056,7 +1285,8 @@ def save_results_to_csv(categories = ["module_contributions", "pr_auc", "pra_per
     output_folder.mkdir(parents=True, exist_ok=True)  # Ensure output folder exists
       
     for category in categories:
-        data = dload(category)  # Load the data for this category
+        # Half-max AUC depends on every dataset (shared threshold): recompute it.
+        data = half_max_auc_scores() if category == "half_max_auc" else dload(category)
         if data is None:
             log.warning(f"No data found for category '{category}'. Skipping save.")
             continue
@@ -1072,6 +1302,14 @@ def save_results_to_csv(categories = ["module_contributions", "pr_auc", "pra_per
                 log.warning(f"Failed to convert and save '{category}': {e}")
             continue
         
+        if category == "half_max_auc" and isinstance(data, dict):
+            df = pd.DataFrame.from_dict(data, orient="index")
+            df.index.name = "Dataset"
+            csv_path = output_folder / f"{category}.csv"
+            df.to_csv(csv_path, index=True)
+            log.info(f"Saved '{category}' to {csv_path}")
+            continue
+
         if category == "pr_auc" and isinstance(data, dict):
             # Special handling: Convert dict to DataFrame (assuming keys are indices, values are data)
             # If values are scalars, create a simple DF with 'Dataset' and 'AUC' columns
