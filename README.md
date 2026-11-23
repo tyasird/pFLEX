@@ -214,6 +214,7 @@ get a lower AUPRC. The half-max AUC looks only at the top of the curves, after
 flex.plot_precision_recall_curve(half_max=True)   # adds the threshold and the window end
 flex.plot_half_max_auc_scores()                   # one half-max AUC bar per dataset
 scores = flex.half_max_auc_scores()               # {dataset: {"score": ..., ...}}
+flex.plot_half_max_explainer()                    # step-by-step figure: formula + results table
 ```
 
 How it works:
@@ -226,8 +227,9 @@ How it works:
 - **Score**: the average precision in that window, scaled so a random ranking
   is 0 and a perfect one is 1.
 
-`flex.plot_half_max_explainer()` draws a step-by-step figure of this
-calculation for your datasets, with the formula and a results table.
+`plot_half_max_explainer()` draws this calculation step by step for your
+datasets (on the linear TP axis the score uses), with the formula and a
+results table under the plot; useful for sharing.
 
 Options (on `half_max_auc_scores`, `plot_half_max_auc_scores` and
 `plot_half_max_explainer`):
@@ -279,9 +281,14 @@ for name, dataset in data.items():
     corr = flex.perform_corr(dataset, config["corr_function"])
     flex.pra(name, corr, is_corr=True)
 
+# Standard AUPRC
 flex.plot_precision_recall_curve()
-flex.plot_auc_scores()            # standard AUPRC
-flex.plot_half_max_auc_scores()   # half-max AUC (early precision)
+flex.plot_auc_scores()
+
+# Half-max AUC (early precision, 1/2 max threshold)
+flex.plot_precision_recall_curve(half_max=True)
+flex.plot_half_max_auc_scores()
+flex.plot_half_max_explainer()
 ```
 
 For a runnable full workflow, see [src/pflex/examples/basic_usage.py](src/pflex/examples/basic_usage.py).
